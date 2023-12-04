@@ -8,17 +8,18 @@ using System.Runtime.Serialization.Json;
 using System.Runtime.Versioning;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
-using static System.Net.Mime.MediaTypeNames;
 
 namespace ProducerConsumer;
 
 /// <summary>
 /// To be able to use Icon assets in this project, the NuGet package "System.Drawing.Common" was added.
 /// To be able to use a Resources.resx file in this project, the NuGet package "System.Resources.Extensions" was added.
+/// NOTE: If you make changes to any embedded resource assets, it is recommended that you rebuild instead of build.
 /// My github repos are here <see href="https://github.com/GuildOfCalamity?tab=repositories"/>.
 /// </summary>
 public class Program
 {
+    #region [Properties]
     static bool clearFlag = false;
     static bool addingFlag = false;
     static bool _shutdown = false;
@@ -30,10 +31,10 @@ public class Program
     static ConsoleKey conKey = ConsoleKey.Process;
     static Settings? settings = new ();
     static IntPtr conHwnd = IntPtr.Zero;
+    static Thread? _adder = null;
     static Scheduler scheduler = new(true);
     static ChannelManager chanman = new(true);
     static Channel<ChannelItem>? channel = Channel.CreateUnbounded<ChannelItem>();
-
     /// <summary>
     /// Macro for <see cref="Exception"/> objects.
     /// </summary>
@@ -59,6 +60,7 @@ public class Program
     /// </para>
     /// </remarks>
     public string Title { get; set; } = "ProducerConsumer";
+    #endregion
 
     static void Main(string[] args)
     {
@@ -66,9 +68,15 @@ public class Program
         // Keep watch for any errant wrong-doing.
         AppDomain.CurrentDomain.UnhandledException += new System.UnhandledExceptionEventHandler(CurrentDomain_UnhandledException);
         Console.OutputEncoding = Encoding.UTF8;
+
+        #region [Get console window sizes]
         conHwnd = ConsoleHelper.GetForegroundWindow();
-        //var size = ConsoleHelper.GetConsoleSize();
-        //ConsoleHelper.SetWindowPosition(conHwnd, 1, 1, size.width, size.width);
+        var winSize = ConsoleHelper.GetWindowSize(conHwnd);
+        var buffSize = ConsoleHelper.GetConsoleSize();
+        Console.WriteLine($"⇒ WindowSize: {winSize.width},{winSize.height}   BufferSize: {buffSize.width},{buffSize.height}");
+        //ConsoleHelper.SetWindowPosition(conHwnd, 1, 1, winSize.width, winSize.width);
+        #endregion
+
         #region [Load the app settings]
         var config = settings?.GetSettings("Settings.cfg");
         // Do we have any settings?
@@ -91,7 +99,7 @@ public class Program
         // Show the current runtime info.
         Assembly assembly = typeof(Program).Assembly;
         var frameAttr = (TargetFrameworkAttribute)assembly.GetCustomAttributes(typeof(TargetFrameworkAttribute), false)[0];
-        Console.WriteLine(string.Format("⇒ {0} ─ User '{1}'", string.IsNullOrEmpty(frameAttr.FrameworkDisplayName) ? frameAttr.FrameworkName : frameAttr.FrameworkDisplayName, Environment.UserName));
+        Console.WriteLine(string.Format("⇒ {0} ─ User \"{1}\"", string.IsNullOrEmpty(frameAttr.FrameworkDisplayName) ? frameAttr.FrameworkName : frameAttr.FrameworkDisplayName, Environment.UserName));
         Console.WriteLine($"⇒ Windows version {Environment.OSVersion.Version} is being reported from the environment.");
         Console.WriteLine($"⇒ Runtime is here \"{RuntimeEnvironment.GetRuntimeDirectory()}\"");
         Console.WriteLine($"⇒ Current process is \"{Process.GetCurrentProcess().MainModule?.FileName}\"");
@@ -104,15 +112,10 @@ public class Program
 
         DumpAllEmbeddedResources();
 
-        ShowLogo(1, addPause: true);
+        ShowLogo(leftPad: 1, addPause: true);
 
-        #region [ConfigureAwait Test]
         //var result = await TaskTimer.Start(async () => { await RunThreadTest(); });
         //Console.WriteLine($"Task took {result.Duration.TotalSeconds} seconds (no return value)");
-        //Task.Run(async () => await TestFuncTaskRunner()).GetAwaiter().GetResult();
-        //Task.Run(async () => await TestActionRunner()).GetAwaiter().GetResult();
-        //Task.Run(() => TestActionRunner2());
-        #endregion
 
         #region [Setup the ChannelManager's delegates]
         chanman.OnBeginInvoke += (item, msg) => { $"••BEGIN•• {msg}".Announcement(); /* var ci = item as ChannelItem; */ };
@@ -141,7 +144,7 @@ public class Program
                 TestScheduler();
                 break;
             case 5:
-                Console.WriteLine($"⇒ Press 'SPACEBAR' to show WMIC values.");
+                TestWMIC();
                 break;
             default:
                 ShowMenu();
@@ -153,7 +156,6 @@ public class Program
         while ((conKey = Console.ReadKey(true).Key) != ConsoleKey.Escape)
         {
             Console.WriteLine($"⇒ \"{conKey}\" keypress detected.");
-            // === Test #3 Options ===
             if (conKey == ConsoleKey.D1)
             {
                 config.TestNumber = 1;
@@ -170,7 +172,17 @@ public class Program
             {
                 config.TestNumber = 3;
                 Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
-                Console.WriteLine($"⇒ Press 'A' to add {nameof(ChannelItem)}s.");
+                //Console.WriteLine($"⇒ Press 'A' to add {nameof(ChannelItem)}s.");
+                if (_adder == null)
+                {
+                    _adder = new Thread(AddingLoop)
+                    {
+                        IsBackground = true,
+                        Name = $"ChannelAdder_{DateTime.Now.ToString("dddMMMdd")}",
+                        Priority = ThreadPriority.BelowNormal
+                    };
+                    _adder.Start();
+                }
             }
             else if (conKey == ConsoleKey.D4)
             {
@@ -182,7 +194,7 @@ public class Program
             {
                 config.TestNumber = 5;
                 Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
-                TestWMIC();
+                //TestWMIC();
                 #region [Gathering system data from cmdline]
                 var lines = CallWMIC();
                 if (lines.Count > 1)
@@ -248,24 +260,7 @@ public class Program
             {
                 if (config?.TestNumber == 3)
                 {
-                    int maxItems = 1000;
-                    List<ChannelItem> list = new();
-                    var vsw = ValueStopwatch.StartNew();
-                    for (int i = 0; i < maxItems; i++)
-                    {
-                        var timeout = Utils.Rnd.Next(6, 121);
-                        var ciCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeout));
-                        list.Add(new ChannelItem(i + 1, Utils.GetRandomName(), () => 
-                        {
-                            if (Utils.Rnd.Next(1, 100) >= 99)
-                                throw new Exception("******* I'm not a real error. *******");
-                            else
-                                Thread.Sleep(Utils.Rnd.Next(50, 1001)); 
-                        }, ciCts.Token));
-                    }
-                    Console.WriteLine($"⇒ Writing {maxItems} items to the Channel...");
-                    chanman.AddItems(list);
-                    Console.WriteLine($"\r\n⇒ Generation took {vsw.GetElapsedTime().GetReadableTime()}");
+                    AddChannelItems(Random.Shared.Next(10, 501));
                 }
             }
             else if (conKey == ConsoleKey.C)
@@ -333,6 +328,74 @@ public class Program
     }
 
     /// <summary>
+    /// Add method for the <see cref="ChannelManager"/>.
+    /// </summary>
+    /// <param name="maxItems">default is 500 items</param>
+    static void AddChannelItems(int maxItems = 500)
+    {
+        List<ChannelItem> list = new();
+        var vsw = ValueStopwatch.StartNew();
+        for (int i = 0; i < maxItems; i++)
+        {
+            var timeout = Random.Shared.Next(6, 121);
+            var ciCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeout));
+            list.Add(new ChannelItem(i + 1, Utils.GetRandomName(), () =>
+            {
+                if (Random.Shared.Next(1, 100) >= 99)
+                    throw new Exception("******* I'm not a real error. *******");
+                else
+                    Thread.Sleep(Random.Shared.Next(50, 601));
+            }, ciCts.Token));
+        }
+        Console.WriteLine($"⇒ Writing {maxItems} items to the Channel...");
+        chanman.AddItems(list);
+        Console.WriteLine($"\r\n⇒ Generation took {vsw.GetElapsedTime().GetReadableTime()}");
+    }
+
+    /// <summary>
+    /// Monitor thread for adding items once content is exhausted.
+    /// </summary>
+    static void AddingLoop()
+    {
+        while (!_shutdown)
+        {
+            Thread.Sleep(100);
+            int current = chanman.GetItemCount();
+            if (current <= 1)
+            {
+                AddChannelItems(Random.Shared.Next(10, 501));
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.DarkYellow;
+                Console.WriteLine($"⇒ Still working on existing items, please wait.");
+                Console.ForegroundColor = ConsoleColor.Gray;
+                switch (current)
+                {
+                    case int n when (n > 2000 && n <= 5000):
+                        Thread.Sleep(30000);
+                        break;
+                    case int n when (n > 1000 && n <= 2000):
+                        Thread.Sleep(20000);
+                        break;
+                    case int n when (n > 500 && n <= 1000):
+                        Thread.Sleep(15000);
+                        break;
+                    case int n when (n > 250 && n <= 500):
+                        Thread.Sleep(10000);
+                        break;
+                    case int n when (n > 10 && n <= 250):
+                        Thread.Sleep(5000);
+                        break;
+                    default:
+                        Thread.Sleep(1000);
+                        break;
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Use the Windows Management Instrumentation to gather basic info about the machine.
     /// </summary>
     static void TestWMIC()
@@ -347,8 +410,8 @@ public class Program
             Console.WriteLine($"⇒ CodePage {os["CodeSet"]} • {os["SystemDirectory"]} • {os["CSName"]} • Status {os["Status"]}");
             Console.WriteLine($"⇒ BootDevice \"{os["BootDevice"]}\" • SystemDevice \"{os["SystemDevice"]}\"");
             Console.WriteLine($"⇒ Organization \"{os["Organization"]}\" • SerialNumber \"{os["SerialNumber"]}\"");
-            var cpu = GetCPUSettings();
-            Console.WriteLine($"⇒ Processor \"{cpu["Name"]}\" • Cores \"{cpu["NumberOfCores"]}\"");
+            //var cpu = GetCPUSettings();
+            //Console.WriteLine($"⇒ Processor \"{cpu["Name"]}\" • Cores \"{cpu["NumberOfCores"]}\"");
         }
         catch (KeyNotFoundException) { }
     }
@@ -377,8 +440,8 @@ public class Program
     #region [WMIC Stuff]
     /// <summary>
     /// The timezone offset in WMIC's date string is "-300", this is not a standard timezone offset format.
-    /// The standard format is "+HH:mm" or "-HH:mm". It seems like the "-300" from WMIC might represent the
-    /// timezone offset in minutes.
+    /// The standard format is "+HH:mm" or "-HH:mm". The "-300" from WMIC is known as the "bias" and represents
+    /// the timezone offset in minutes.
     /// </summary>
     static string WMICOffsetConversion(string dateString)
     {
@@ -643,7 +706,7 @@ public class Program
                 Utils.GetRandomName(),
                 () =>
                 {
-                    Thread.Sleep(Utils.Rnd.Next(50, 501));
+                    Thread.Sleep(Random.Shared.Next(50, 501));
                 },
                 ciCts.Token);
             items?.Writer.TryWrite(ci);
@@ -704,7 +767,7 @@ public class Program
                     Utils.GetRandomName(),
                     async () =>
                     {
-                        await Task.Delay(Utils.Rnd.Next(50, 501));
+                        await Task.Delay(Random.Shared.Next(50, 501));
                     },
                     ciCts.Token);
                 await items.Writer.WriteAsync(ci);
@@ -763,7 +826,7 @@ public class Program
                 {
                     int trapped = idx;
                     string title = Utils.GetRandomName();
-                    int secDelay = Utils.Rnd.Next(1, 31);
+                    int secDelay = Random.Shared.Next(1, 31);
                     DateTime runTime = DateTime.Now.AddSeconds(secDelay);
                     $"⇒ {title} will run {runTime.ToLongTimeString()}".Announcement();
                     CancellationTokenSource aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
@@ -774,7 +837,7 @@ public class Program
                         {
                             var vsw = ValueStopwatch.StartNew();
                             Console.WriteLine($"{title} #{trapped} scheduled for {runTime.ToLongTimeString()} started");
-                            Thread.Sleep(Utils.Rnd.Next(100, 3001));
+                            Thread.Sleep(Random.Shared.Next(100, 3001));
                             Console.WriteLine($"{title} #{trapped} ran for {vsw.GetElapsedTime().GetReadableTime()}");
                         },
                         DateTime.Now.AddSeconds(secDelay), // Set some time in the future to run.
@@ -792,7 +855,7 @@ public class Program
         {
             int trapped = idx;
             string title = Utils.GetRandomName();
-            int secDelay = Utils.Rnd.Next(1, 11);
+            int secDelay = Random.Shared.Next(1, 11);
             DateTime runTime = DateTime.Now.AddSeconds(secDelay);
             $"⇒ {title} will run {runTime.ToLongTimeString()}".Announcement();
             CancellationTokenSource aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
@@ -803,7 +866,7 @@ public class Program
                 {
                     var vsw = ValueStopwatch.StartNew();
                     Console.WriteLine($"{title} #{trapped} scheduled for {runTime.ToLongTimeString()} started");
-                    Thread.Sleep(Utils.Rnd.Next(100, 3001));
+                    Thread.Sleep(Random.Shared.Next(100, 3001));
                     Console.WriteLine($"{title} #{trapped} ran for {vsw.GetElapsedTime().GetReadableTime()}");
                 },
                 DateTime.Now.AddSeconds(secDelay), // Set some time in the future to run.
@@ -1337,12 +1400,15 @@ public class Program
         }
     }
 
+    /// <summary>
+    /// If <paramref name="alias"/> is empty then a random category will be selected.
+    /// </summary>
     static List<string> CallWMIC(string alias = "")
     {
         if (string.IsNullOrEmpty(alias))
         {
             var available = GetWMICOptions();
-            alias = available[Utils.Rnd.Next(0, available.Length)].Trim();
+            alias = available[Random.Shared.Next(0, available.Length)].Trim();
             Console.ForegroundColor = ConsoleColor.White;
             Console.WriteLine($"Showing all values for \"{alias}\"...");
             Console.ForegroundColor = ConsoleColor.Gray;
@@ -1353,7 +1419,7 @@ public class Program
         //proc.StartInfo.Environment["JAVA_TOOL_OPTIONS"] = $"-Dcom.android.sdkmanager.toolsdir=\"{toolPath}\"";
         proc.StartInfo.FileName = "wmic";
         //proc.StartInfo.Arguments = "computersystem get";
-        proc.StartInfo.Arguments = $"{alias} get";
+        proc.StartInfo.Arguments = $"{alias} get"; // The "get" or "list" modifier can be used for each category.
         //proc.StartInfo.WorkingDirectory = libPath;
         proc.StartInfo.UseShellExecute = false;
         proc.StartInfo.RedirectStandardOutput = true;
