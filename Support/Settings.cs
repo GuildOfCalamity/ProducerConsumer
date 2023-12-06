@@ -5,7 +5,14 @@ namespace ProducerConsumer;
 /// <summary>
 /// This is our serializable class for storing app settings.
 /// </summary>
-/// 
+/// <remarks>
+/// My original version did not allow direct access to the 
+/// <see cref="_Settings"/> member. I have modified this to now
+/// instance the <see cref="_Settings"/>. This configuration allows
+/// the user to directly access the settings without having to reload
+/// from disk. Calling <see cref="GetSettings(string)"/> will return 
+/// the current <see cref="_Settings"/> member.
+/// </remarks>
 [DataContract]
 public class Settings
 {
@@ -23,12 +30,6 @@ public class Settings
         _FontName = fontName;
         _FontSize = fontSize;
         _TestNumber = testNumber;
-    }
-
-    public Settings? AppSettings
-    {
-        get { return _Settings; }
-        set { _Settings = value; }
     }
 
     [DataMember]
@@ -55,52 +56,67 @@ public class Settings
     /// <summary>
     /// Load system settings from disk.
     /// </summary>
-    /// <param name="filePath">name of config file</param>
+    /// <param name="fileName">name of config file</param>
+    /// <param name="path">optional directory path</param>
     /// <returns><see cref="Settings"/> object</returns>
-    public Settings? GetSettings(string fileName)
+    public Settings GetSettings(string fileName, string path = "")
     {
         try
         {
             if (_Settings == null && !string.IsNullOrEmpty(fileName))
             {
-                if (File.Exists(Path.Combine(Directory.GetCurrentDirectory(), fileName)))
+                if (string.IsNullOrEmpty(path))
+                    path = Directory.GetCurrentDirectory();
+
+                if (File.Exists(Path.Combine(path, fileName)))
                 {
-                    string imported = Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(Directory.GetCurrentDirectory(), fileName)));
-                    Debug.WriteLine($"⇒ Config loaded: {imported}");
+                    string imported = Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(path, fileName)));
+                    Debug.WriteLine($"⇒ Config loaded: {imported.Truncate(40)}...");
                     _Settings = Utils.FromJsonTo<Settings>(imported);
                 }
                 else
                 {
-                    Debug.WriteLine($"⇒ No config was found, creating default config...");
+                    Debug.WriteLine($"⇒ No config was found, creating default config.");
                     _Settings = new Settings("Consolas", 24, 99);
                     SaveSettings(fileName);
                 }
             }
-
-            return _Settings;
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"⇒ LoadSettings(ERROR): {ex.Message}");
-            return null;
         }
+
+        // If there was any issue during the process just default the settings.
+        if (_Settings == null)
+            _Settings = new Settings("Consolas", 24, 99);
+
+        return _Settings;
     }
 
     /// <summary>
     /// Save system settings to disk.
     /// </summary>
     /// <param name="sysSettings"><see cref="SerialConfig"/> object</param>
-    /// <param name="filePath">name of config file</param>
+    /// <param name="fileName">name of config file</param>
+    /// <param name="path">optional directory path</param>
     /// <returns>true is successful, false otherwise</returns>
-    public bool SaveSettings(string filePath)
+    public bool SaveSettings(string fileName, string path = "")
     {
         try
         {
-            if (_Settings != null && !string.IsNullOrEmpty(filePath))
+            if (_Settings != null && !string.IsNullOrEmpty(fileName))
             {
-                File.WriteAllBytes(System.IO.Path.Combine(Directory.GetCurrentDirectory(), filePath), Encoding.UTF8.GetBytes(Utils.ToJson(_Settings)));
+                if (string.IsNullOrEmpty(path))
+                    path = Directory.GetCurrentDirectory();
+
+                File.WriteAllBytes(System.IO.Path.Combine(path, fileName), Encoding.UTF8.GetBytes(Utils.ToJson(_Settings)));
                 Debug.WriteLine($"⇒ Settings saved.");
                 return true;
+            }
+            else
+            {
+                Debug.WriteLine($"⇒ Problem with saving the settings.");
             }
         }
         catch (Exception ex)
@@ -111,6 +127,7 @@ public class Settings
         return false;
     }
 
+    #region [Extras]
     /// <summary>
     /// We can use our old friend Reflection to iterate through internal class members/properties.
     /// </summary>
@@ -130,7 +147,6 @@ public class Settings
         }
     }
 
-    #region [Support Methods]
     /// <summary>
     /// Uses reflection to get the field value from an object & type.
     /// </summary>
