@@ -20,21 +20,21 @@ namespace ProducerConsumer;
 public class Program
 {
     #region [Properties]
-    static bool clearFlag = false;
-    static bool addingFlag = false;
+    static bool _clearFlag = false;
+    static bool _addingFlag = false;
     static bool _shutdown = false;
     static int _memberCount = 0;
-    static int currentIndex = 0;
-    static int maxDesired = 20;
-    static Icon? iconNormal = null;
-    static Icon? iconWarning = null;
-    static ConsoleKey conKey = ConsoleKey.Process;
-    static Settings? settings = new ();
-    static IntPtr conHwnd = IntPtr.Zero;
+    static int _currentIndex = 0;
+    static int _maxDesired = 20;
+    static Icon? _iconNormal = null;
+    static Icon? _iconWarning = null;
+    static ConsoleKey _conKey = ConsoleKey.Process;
+    static Settings _settings = new();
+    static IntPtr _conHwnd = IntPtr.Zero;
     static Thread? _adder = null;
-    static Scheduler scheduler = new(true);
-    static ChannelManager chanman = new(true);
-    static Channel<ChannelItem>? channel = Channel.CreateUnbounded<ChannelItem>();
+    static ScheduleManager _scheduler = new(true);
+    static ChannelManager _chanman = new(true);
+
     /// <summary>
     /// Macro for <see cref="Exception"/> objects.
     /// </summary>
@@ -70,15 +70,15 @@ public class Program
         Console.OutputEncoding = Encoding.UTF8;
 
         #region [Get console window sizes]
-        conHwnd = ConsoleHelper.GetForegroundWindow();
-        var winSize = ConsoleHelper.GetWindowSize(conHwnd);
+        _conHwnd = ConsoleHelper.GetForegroundWindow();
+        var winSize = ConsoleHelper.GetWindowSize(_conHwnd);
         var buffSize = ConsoleHelper.GetConsoleSize();
-        Console.WriteLine($"⇒ WindowSize: {winSize.width},{winSize.height}   BufferSize: {buffSize.width},{buffSize.height}");
+        Console.WriteLine($"⇒ WindowSize:{winSize.width},{winSize.height} ─ BufferSize:{buffSize.width},{buffSize.height}");
         //ConsoleHelper.SetWindowPosition(conHwnd, 1, 1, winSize.width, winSize.width);
         #endregion
 
         #region [Load the app settings]
-        var config = settings?.GetSettings("Settings.cfg");
+        var config = _settings.GetSettings("Settings.cfg");
         // Do we have any settings?
         if (config != null)
         {
@@ -103,11 +103,14 @@ public class Program
         Console.WriteLine($"⇒ Windows version {Environment.OSVersion.Version} is being reported from the environment.");
         Console.WriteLine($"⇒ Runtime is here \"{RuntimeEnvironment.GetRuntimeDirectory()}\"");
         Console.WriteLine($"⇒ Current process is \"{Process.GetCurrentProcess().MainModule?.FileName}\"");
-        // Configure embedded resources.
-        iconNormal = Resources.ResourceManager.GetObject("CarWash") as Icon;
-        iconWarning = Resources.ResourceManager.GetObject("Warning") as Icon;
-        // Update the console window icon.
-        IconUpdater.SetConsoleIconAtRuntime(iconNormal);
+        if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+        {
+            // Configure embedded resources.
+            _iconNormal = Resources.ResourceManager.GetObject("CarWash") as Icon;
+            _iconWarning = Resources.ResourceManager.GetObject("Warning") as Icon;
+            // Update the console window icon.
+            IconUpdater.SetConsoleIconAtRuntime(_iconNormal);
+        }
         #endregion
 
         DumpAllEmbeddedResources();
@@ -118,13 +121,54 @@ public class Program
         //Console.WriteLine($"Task took {result.Duration.TotalSeconds} seconds (no return value)");
 
         #region [Setup the ChannelManager's delegates]
-        chanman.OnBeginInvoke += (item, msg) => { $"••BEGIN•• {msg}".Announcement(); /* var ci = item as ChannelItem; */ };
-        chanman.OnEndInvoke += (item, msg) => { $"••END•• {msg}".Announcement(); /* var ci = item as ChannelItem; */ };
-        chanman.OnCancel += (item, msg) => { $"••CANCEL•• {msg}".Announcement(); };
-        chanman.OnError += (item, msg) => { $"••ERROR•• {msg}".Announcement(); };
-        chanman.OnWarning += (item, msg) => { $"••WARNING•• {msg}".Announcement(); };
-        chanman.OnShutdown += (msg) => { $"••SHUTDOWN•• {msg}".Announcement(); };
-        chanman.ChangeResolution(1000);
+        _chanman.OnBeginInvoke += (item, msg) => { $"••BEGIN••••• {msg}".Announcement(); /* var ci = item as ChannelItem; */ };
+        _chanman.OnEndInvoke += (item, msg) =>   { $"••END••••••• {msg}".Announcement(); /* var ci = item as ChannelItem; */ };
+        _chanman.OnCancel += (item, msg) =>      { $"••CANCEL•••• {msg}".Announcement(); };
+        _chanman.OnError += (item, msg) =>       { $"••ERROR••••• {msg}".Announcement(); };
+        _chanman.OnWarning += (item, msg) =>     { $"••WARNING••• {msg}".Announcement(); };
+        _chanman.OnShutdown += (msg) =>                { $"••SHUTDOWN•• {msg}".Announcement(); };
+        _chanman.ChangeResolution(1000);
+        #endregion
+
+        #region [Setup the ScheduleManager's delegates]
+        _scheduler.OnInvoke += (item, msg) =>  { $"••INVOKE•••• {msg}".Announcement(); /* var ai = item as ActionItem; */ };
+        _scheduler.OnCancel += (item, msg) =>  { $"••CANCEL•••• {msg}".Announcement(); };
+        _scheduler.OnError += (item, msg) =>   { $"••ERROR••••• {msg}".Announcement(); };
+        _scheduler.OnWarning += (item, msg) => { $"••WARNING••• {msg}".Announcement(); };
+        _scheduler.OnShutdown += (msg) =>            { $"••SHUTDOWN•• {msg}".Announcement(); };
+        _scheduler.OnExhausted += (msg) =>           { $"••EXHAUSTED•• {msg}".Announcement();
+            if (!_clearFlag)
+            {
+                #region [Test reusing the Scheduler]
+                Thread.Sleep(2000);
+                ShowLogo(leftPad: 1, addPause: true);
+                for (int idx = _currentIndex; idx < (_currentIndex + _maxDesired); idx++)
+                {
+                    int trapped = idx;
+                    string title = Utils.GetRandomName();
+                    int secDelay = Random.Shared.Next(1, 31);
+                    DateTime runTime = DateTime.Now.AddSeconds(secDelay);
+                    $"⇒ {title} will run {runTime.ToLongTimeString()}".Announcement();
+                    CancellationTokenSource aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+                    _scheduler.ScheduleItem(new ActionItem(
+                        trapped,
+                        $"{title} #{trapped}",
+                        delegate ()
+                        {
+                            var vsw = ValueStopwatch.StartNew();
+                            Console.WriteLine($"{title} #{trapped} scheduled for {runTime.ToLongTimeString()} started");
+                            Thread.Sleep(Random.Shared.Next(100, 3001));
+                            Console.WriteLine($"{title} #{trapped} ran for {vsw.GetElapsedTime().GetReadableTime()}");
+                        },
+                        DateTime.Now.AddSeconds(secDelay), // Set some time in the future to run.
+                        aiCts.Token)
+                    );
+                    Thread.Sleep(10);
+                }
+                _currentIndex += _maxDesired;
+                #endregion
+            }
+        };
         #endregion
 
         #region [Select test to run based on config file]
@@ -144,7 +188,8 @@ public class Program
                 TestScheduler();
                 break;
             case 5:
-                TestWMIC();
+                if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+                    TestWMIC();
                 break;
             default:
                 ShowMenu();
@@ -153,24 +198,24 @@ public class Program
         #endregion
 
         #region [Monitor user keypress]
-        while ((conKey = Console.ReadKey(true).Key) != ConsoleKey.Escape)
+        while ((_conKey = Console.ReadKey(true).Key) != ConsoleKey.Escape)
         {
-            Console.WriteLine($"⇒ \"{conKey}\" keypress detected.");
-            if (conKey == ConsoleKey.D1)
+            Console.WriteLine($"⇒ \"{_conKey}\" keypress detected.");
+            if (_conKey == ConsoleKey.D1)
             {
-                config.TestNumber = 1;
+                config!.TestNumber = 1;
                 Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
                 TestSequentialThreadingChannel();
             }
-            else if (conKey == ConsoleKey.D2)
+            else if (_conKey == ConsoleKey.D2)
             {
-                config.TestNumber = 2;
+                config!.TestNumber = 2;
                 Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
                 Task.Run(async () => await TestParallelThreadingChannel()).GetAwaiter().GetResult();
             }
-            else if (conKey == ConsoleKey.D3)
+            else if (_conKey == ConsoleKey.D3)
             {
-                config.TestNumber = 3;
+                config!.TestNumber = 3;
                 Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
                 //Console.WriteLine($"⇒ Press 'A' to add {nameof(ChannelItem)}s.");
                 if (_adder == null)
@@ -183,54 +228,66 @@ public class Program
                     };
                     _adder.Start();
                 }
+                else
+                {
+                    //AddChannelItems(Random.Shared.Next(10, _maxDesired * 10));
+                    //TestWaitToWriteAsync(Random.Shared.Next(10, _maxDesired * 20));
+                    TestAddItemValueTask(Random.Shared.Next(10, _maxDesired * 20));
+                }
             }
-            else if (conKey == ConsoleKey.D4)
+            else if (_conKey == ConsoleKey.D4)
             {
-                config.TestNumber = 4;
+                config!.TestNumber = 4;
                 Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
                 TestScheduler();
             }
-            else if (conKey == ConsoleKey.D5)
+            else if (_conKey == ConsoleKey.D5)
             {
-                config.TestNumber = 5;
-                Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
-                //TestWMIC();
-                #region [Gathering system data from cmdline]
-                var lines = CallWMIC();
-                if (lines.Count > 1)
+                config!.TestNumber = 5;
+                if (Environment.OSVersion.Platform == PlatformID.Win32NT)
                 {
-                    Console.ForegroundColor = ConsoleColor.Blue;
-                    int index = 0;
-                    string data = lines[1];
-                    Dictionary<string, int> distances = GetDistances(lines[0]);
-                    foreach (var kvp in distances)
+                    Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
+                    #region [Gathering system data from cmdline]
+                    var lines = CallWMIC();
+                    if (lines.Count > 1)
                     {
-                        if (!string.IsNullOrEmpty(kvp.Key))
+                        Console.ForegroundColor = ConsoleColor.Blue;
+                        int index = 0;
+                        string data = lines[1];
+                        Dictionary<string, int> distances = GetDistances(lines[0]);
+                        foreach (var kvp in distances)
                         {
-                            string element = $"{kvp.Key}" + new string('.', kvp.Value);
-                            if (data.Length >= index + element.Length)
+                            if (!string.IsNullOrEmpty(kvp.Key))
                             {
-                                string value = $"{data.Substring(index, element.Length)}";
-                                Console.WriteLine(string.Format("{0,-38}{1,-42}", kvp.Key, value));
-                                if (value.StartsWith("{"))
+                                string element = $"{kvp.Key}" + new string('.', kvp.Value);
+                                if (data.Length >= index + element.Length)
                                 {
-                                    var group = value.ExtractWMICSubItems();
-                                    foreach (var item in group)
+                                    string value = $"{data.Substring(index, element.Length)}";
+                                    Console.WriteLine(string.Format("{0,-38}{1,-42}", kvp.Key, value));
+                                    if (value.StartsWith("{"))
                                     {
-                                        if (!string.IsNullOrEmpty(item))
-                                            Console.WriteLine($"  • {item}");
+                                        var group = value.ExtractWMICSubItems();
+                                        foreach (var item in group)
+                                        {
+                                            if (!string.IsNullOrEmpty(item))
+                                                Console.WriteLine($"  • {item}");
+                                        }
                                     }
                                 }
+                                index += element.Length;
                             }
-                            index += element.Length;
                         }
                     }
+                    Console.ForegroundColor = ConsoleColor.Gray;
+                    Console.WriteLine();
                 }
-                Console.ForegroundColor = ConsoleColor.Gray;
-                Console.WriteLine();
+                else
+                {
+                    Console.WriteLine($"⇒ Test #{config.TestNumber} is only available on Windows.");
+                }
                 #endregion
             }
-            else if (conKey == ConsoleKey.D6)
+            else if (_conKey == ConsoleKey.D6)
             {
                 Console.WriteLine($"⇒ Collecting services...");
                 var services = GetWindowsServices();
@@ -243,7 +300,7 @@ public class Program
                     catch (KeyNotFoundException) { }
                 }
             }
-            else if (conKey == ConsoleKey.D7)
+            else if (_conKey == ConsoleKey.D7)
             {
                 Console.WriteLine($"⇒ Collecting processes...");
                 var procs = GetWindowsProcesses();
@@ -256,50 +313,43 @@ public class Program
                     catch (KeyNotFoundException) { }
                 }
             }
-            else if (conKey == ConsoleKey.A)
-            {
-                if (config?.TestNumber == 3)
-                {
-                    AddChannelItems(Random.Shared.Next(10, 501));
-                }
-            }
-            else if (conKey == ConsoleKey.C)
+            else if (_conKey == ConsoleKey.C)
             {
                 if (config?.TestNumber == 3)
                 {
                     Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\r\n⇒ Clearing {chanman.GetItemCount()} from the Channel.");
-                    chanman.ClearItems();
+                    Console.WriteLine($"\r\n⇒ Clearing {_chanman.GetItemCount()} from the Channel.");
+                    _chanman.ClearItems();
                 }
                 else if (config?.TestNumber == 4)
                 {
                     Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\r\n⇒ Clearing {scheduler.GetInactivatedCount()} items from the scheduler!");
-                    scheduler.ClearSchedule();
-                    clearFlag = true;
+                    Console.WriteLine($"\r\n⇒ Clearing {_scheduler.GetInactivatedCount()} items from the scheduler!");
+                    _scheduler.ClearSchedule();
+                    _clearFlag = true;
                 }
             }
-            else if (conKey == ConsoleKey.B)
+            else if (_conKey == ConsoleKey.B)
             {
                 if (config?.TestNumber == 3)
                 {
                     Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\r\nIsBusy? ⇒ {chanman.IsBusy()}");
+                    Console.WriteLine($"\r\nIsBusy? ⇒ {_chanman.IsBusy()}");
                 }
                 else if (config?.TestNumber == 4)
                 {
                     Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"\r\n⇒ Still waiting to be activated: {scheduler.GetInactivatedCount()}");
+                    Console.WriteLine($"\r\n⇒ Still waiting to be activated: {_scheduler.GetInactivatedCount()}");
                 }
             }
-            else if (conKey == ConsoleKey.T)
+            else if (_conKey == ConsoleKey.T)
             {
                 if (config?.TestNumber == 3)
                 {
                     // This will not stop execution of the items if we're already inside the while loop.
-                    chanman.Toggle();
+                    _chanman.Toggle();
                     Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\r\nIsAgentAlive? ⇒ {chanman.IsAgentAlive()}");
+                    Console.WriteLine($"\r\nIsAgentAlive? ⇒ {_chanman.IsAgentAlive()}");
                 }
                 else if (config?.TestNumber == 4) 
                 { 
@@ -312,32 +362,32 @@ public class Program
         Console.ForegroundColor = ConsoleColor.White;
         if (config?.TestNumber == 3)
         {
-            Console.WriteLine($"\r\n⇒ {chanman.GetItemCount()} items remain in the manager. ");
-            chanman.Shutdown(false); // Inform the agent to close shop.
+            Console.WriteLine($"\r\n⇒ {_chanman.GetItemCount()} items remain in the manager. ");
+            _chanman.Shutdown(false); // Inform the agent to close shop.
         }
         else if (config?.TestNumber == 4)
         {
-            Console.WriteLine($"\r\n⇒ {scheduler.GetInactivatedCount()} items remain in the scheduler. ");
-            scheduler.Shutdown(false); // Inform the agent to close shop.
+            Console.WriteLine($"\r\n⇒ {_scheduler.GetInactivatedCount()} items remain in the scheduler. ");
+            _scheduler.Shutdown(false); // Inform the agent to close shop.
         }
         _shutdown = true; // signal any local thread loops
         #endregion
 
         Console.WriteLine("\r\n⇒ Closing... ");
-        Thread.Sleep(1600);
+        Thread.Sleep(1800);
     }
 
     /// <summary>
     /// Add method for the <see cref="ChannelManager"/>.
     /// </summary>
-    /// <param name="maxItems">default is 500 items</param>
-    static void AddChannelItems(int maxItems = 500)
+    /// <param name="maxItems">default is 250 items</param>
+    static void AddChannelItems(int maxItems = 250)
     {
         List<ChannelItem> list = new();
         var vsw = ValueStopwatch.StartNew();
         for (int i = 0; i < maxItems; i++)
         {
-            var timeout = Random.Shared.Next(6, 121);
+            var timeout = Random.Shared.Next(10, 181);
             var ciCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeout));
             list.Add(new ChannelItem(i + 1, Utils.GetRandomName(), () =>
             {
@@ -348,8 +398,50 @@ public class Program
             }, ciCts.Token));
         }
         Console.WriteLine($"⇒ Writing {maxItems} items to the Channel...");
-        chanman.AddItems(list);
+        _chanman.AddItems(list);
         Console.WriteLine($"\r\n⇒ Generation took {vsw.GetElapsedTime().GetReadableTime()}");
+    }
+
+    /// <summary>
+    /// Test for <see cref="ChannelManager.AddItemValueTask(ChannelItem, CancellationToken)"/>.
+    /// </summary>
+    static async void TestAddItemValueTask(int maxItems = 250)
+    {
+        var vsw = ValueStopwatch.StartNew();
+        for (int i = 0; i < maxItems; i++)
+        {
+            var timeout = Random.Shared.Next(10, 181);
+            var ciCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeout));
+            var vt = await _chanman.AddItemValueTask(new ChannelItem(i + 1, Utils.GetRandomName(), () =>
+            {
+                if (Random.Shared.Next(1, 100) >= 99)
+                    throw new Exception("******* I'm not a real error. *******");
+                else
+                    Thread.Sleep(Random.Shared.Next(50, 601));
+            }, ciCts.Token), ciCts.Token);
+        }
+        Console.WriteLine($"\r\n⇒ AddItemValueTask process took {vsw.GetElapsedTime().GetReadableTime()}");
+    }
+
+    /// <summary>
+    /// Test for <see cref="ChannelManager.WaitToWriteAsync(ChannelItem, CancellationToken)"/>.
+    /// </summary>
+    static async void TestWaitToWriteAsync(int maxItems = 250)
+    {
+        var vsw = ValueStopwatch.StartNew();
+        for (int i = 0; i < maxItems; i++)
+        {
+            var timeout = Random.Shared.Next(10, 181);
+            var ciCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeout));
+            await _chanman.WaitToWriteAsync(new ChannelItem(i + 1, Utils.GetRandomName(), () =>
+            {
+                if (Random.Shared.Next(1, 100) >= 99)
+                    throw new Exception("******* I'm not a real error. *******");
+                else
+                    Thread.Sleep(Random.Shared.Next(50, 601));
+            }, ciCts.Token), ciCts.Token);
+        }
+        Console.WriteLine($"\r\n⇒ WaitToWriteAsync process took {vsw.GetElapsedTime().GetReadableTime()}");
     }
 
     /// <summary>
@@ -360,10 +452,11 @@ public class Program
         while (!_shutdown)
         {
             Thread.Sleep(100);
-            int current = chanman.GetItemCount();
+            int current = _chanman.GetItemCount();
             if (current <= 1)
             {
-                AddChannelItems(Random.Shared.Next(10, 501));
+                ShowLogo(leftPad: 1, addPause: true);
+                AddChannelItems(Random.Shared.Next(10, _maxDesired * 10));
             }
             else
             {
@@ -372,6 +465,9 @@ public class Program
                 Console.ForegroundColor = ConsoleColor.Gray;
                 switch (current)
                 {
+                    case int n when (n > 5000):
+                        Thread.Sleep(60000);
+                        break;
                     case int n when (n > 2000 && n <= 5000):
                         Thread.Sleep(30000);
                         break;
@@ -395,6 +491,30 @@ public class Program
         }
     }
 
+
+    /// <summary>
+    /// Display options menu to user.
+    /// </summary>
+    public static void ShowMenu()
+    {
+        Console.WriteLine();
+        Console.WriteLine($"─────────────────────────────────────────");
+        Console.WriteLine($"   {AppDomain.CurrentDomain.FriendlyName.Replace(".exe", "")} v{Assembly.GetExecutingAssembly().GetName().Version}");
+        Console.WriteLine($"─────────────────────────────────────────");
+        Console.WriteLine($"   1) Test SequentialThreading (Channel) ");
+        Console.WriteLine($"   2) Test ParallelThreading (Channel)   ");
+        Console.WriteLine($"   3) Test ChannelMonitor                ");
+        Console.WriteLine($"   4) Test Scheduler (BlockingCollection)");
+        if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+            Console.WriteLine($"   5) Test WMIC                          ");
+        Console.WriteLine($"   B) Check if agent is busy             ");
+        Console.WriteLine($"   C) Clear items                        ");
+        Console.WriteLine($"   T) Toggle agent thread                ");
+        Console.WriteLine($" Esc) Exit application                   ");
+        Console.WriteLine($"─────────────────────────────────────────");
+    }
+
+    #region [WMIC Stuff]
     /// <summary>
     /// Use the Windows Management Instrumentation to gather basic info about the machine.
     /// </summary>
@@ -416,28 +536,6 @@ public class Program
         catch (KeyNotFoundException) { }
     }
 
-    /// <summary>
-    /// Display options menu to user.
-    /// </summary>
-    public static void ShowMenu()
-    {
-        Console.WriteLine();
-        Console.WriteLine($"─────────────────────────────────────────");
-        Console.WriteLine($"   {AppDomain.CurrentDomain.FriendlyName.Replace(".exe", "")} v{Assembly.GetExecutingAssembly().GetName().Version}");
-        Console.WriteLine($"─────────────────────────────────────────");
-        Console.WriteLine($"   1) Test SequentialThreading (Channel) ");
-        Console.WriteLine($"   2) Test ParallelThreading (Channel)   ");
-        Console.WriteLine($"   3) Test ChannelMonitor                ");
-        Console.WriteLine($"   4) Test Scheduler (BlockingCollection)");
-        Console.WriteLine($"   5) Test WMIC                          ");
-        Console.WriteLine($"   B) Check if agent is busy             ");
-        Console.WriteLine($"   C) Clear items                        ");
-        Console.WriteLine($"   T) Toggle agent thread                ");
-        Console.WriteLine($" Esc) Exit application                   ");
-        Console.WriteLine($"─────────────────────────────────────────");
-    }
-
-    #region [WMIC Stuff]
     /// <summary>
     /// The timezone offset in WMIC's date string is "-300", this is not a standard timezone offset format.
     /// The standard format is "+HH:mm" or "-HH:mm". The "-300" from WMIC is known as the "bias" and represents
@@ -805,53 +903,8 @@ public class Program
     /// </summary>
     static void TestScheduler()
     {
-        // Setup delegate for invoke event…
-        scheduler.OnInvoke += (item, msg) => { $"••INVOKE•• {msg}".Announcement(); /* var ai = item as ActionItem; */ };
-        // Setup delegate for cancel event…
-        scheduler.OnCancel += (item, msg) => { $"••CANCEL•• {msg}".Announcement(); };
-        // Setup delegate for error event…
-        scheduler.OnError += (item, msg) => { $"••ERROR•• {msg}".Announcement(); };
-        // Setup delegate for warning event…
-        scheduler.OnWarning += (item, msg) => { $"••WARNING•• {msg}".Announcement(); };
-        // Setup delegate for shutdown event…
-        scheduler.OnShutdown += (msg) => { $"••SHUTDOWN•• {msg}".Announcement(); };
-        // Setup delegate for exhausted event…
-        scheduler.OnExhausted += (msg) => { $"••EXHAUSTED•• {msg}".Announcement();
-            if (!clearFlag)
-            {
-                #region [Test reusing the Scheduler]
-                Thread.Sleep(2000);
-                ShowLogo(1, addPause: true);
-                for (int idx = currentIndex; idx < (currentIndex + maxDesired); idx++)
-                {
-                    int trapped = idx;
-                    string title = Utils.GetRandomName();
-                    int secDelay = Random.Shared.Next(1, 31);
-                    DateTime runTime = DateTime.Now.AddSeconds(secDelay);
-                    $"⇒ {title} will run {runTime.ToLongTimeString()}".Announcement();
-                    CancellationTokenSource aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-                    scheduler.ScheduleItem(new ActionItem(
-                        trapped,
-                        $"{title} #{trapped}",
-                        delegate ()
-                        {
-                            var vsw = ValueStopwatch.StartNew();
-                            Console.WriteLine($"{title} #{trapped} scheduled for {runTime.ToLongTimeString()} started");
-                            Thread.Sleep(Random.Shared.Next(100, 3001));
-                            Console.WriteLine($"{title} #{trapped} ran for {vsw.GetElapsedTime().GetReadableTime()}");
-                        },
-                        DateTime.Now.AddSeconds(secDelay), // Set some time in the future to run.
-                        aiCts.Token)
-                    );
-                    Thread.Sleep(10);
-                }
-                currentIndex += maxDesired;
-                #endregion
-            }
-        };
-
         #region [Add Items To Scheduler]
-        for (int idx = 0; idx < maxDesired; idx++)
+        for (int idx = 0; idx < _maxDesired; idx++)
         {
             int trapped = idx;
             string title = Utils.GetRandomName();
@@ -859,7 +912,7 @@ public class Program
             DateTime runTime = DateTime.Now.AddSeconds(secDelay);
             $"⇒ {title} will run {runTime.ToLongTimeString()}".Announcement();
             CancellationTokenSource aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            scheduler.ScheduleItem(new ActionItem(
+            _scheduler.ScheduleItem(new ActionItem(
                 trapped,
            $"{title} #{trapped}",
                 delegate ()
@@ -872,7 +925,7 @@ public class Program
                 DateTime.Now.AddSeconds(secDelay), // Set some time in the future to run.
                 aiCts.Token)
             );
-            currentIndex = idx + 1;
+            _currentIndex = idx + 1;
             Thread.Sleep(10);
         }
         #endregion
@@ -918,21 +971,22 @@ public class Program
             string[] msg = {
                 "──[DETAILS]─────────────────────────────────────────────",
                 e.Message,
-                e.InnerException?.Message,
+                e.InnerException?.Message ?? "",
             };
             Console.ForegroundColor = ConsoleColor.DarkRed;
             Console.WriteLine(string.Join(Environment.NewLine, msg));
 
             string[] trc = {
                 "──[STACK]───────────────────────────────────────────────",
-                e.StackTrace
+                e.StackTrace ?? ""
             };
             Console.ForegroundColor = ConsoleColor.DarkYellow;
             Console.WriteLine(string.Join(Environment.NewLine, trc));
             Console.ForegroundColor = tmp;
 
-            // Update the console window icon.
-            IconUpdater.SetConsoleIconAtRuntime(iconWarning);
+            
+            if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+                IconUpdater.SetConsoleIconAtRuntime(_iconWarning); // Update the console window icon.
         }
     }
 
@@ -1389,14 +1443,14 @@ public class Program
     /// </summary>
     static void FocusConsole()
     {
-        if (conHwnd == IntPtr.Zero)
-            conHwnd = ConsoleHelper.GetForegroundWindow();
+        if (_conHwnd == IntPtr.Zero)
+            _conHwnd = ConsoleHelper.GetForegroundWindow();
 
-        if (conHwnd != IntPtr.Zero)
+        if (_conHwnd != IntPtr.Zero)
         {
-            ConsoleHelper.ShowWindow(conHwnd, ConsoleHelper.SW_RESTORE);
+            ConsoleHelper.ShowWindow(_conHwnd, ConsoleHelper.SW_RESTORE);
             Thread.Sleep(1);
-            ConsoleHelper.SetForegroundWindow(conHwnd);
+            ConsoleHelper.SetForegroundWindow(_conHwnd);
         }
     }
 
