@@ -71,7 +71,7 @@ public class Settings
                 if (File.Exists(Path.Combine(path, fileName)))
                 {
                     string imported = Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(path, fileName)));
-                    Debug.WriteLine($"⇒ Config loaded: {imported.Truncate(40)}...");
+                    Debug.WriteLine($"⇒ Config loaded: {imported.Truncate(40)}");
                     _Settings = Utils.FromJsonTo<Settings>(imported);
                 }
                 else
