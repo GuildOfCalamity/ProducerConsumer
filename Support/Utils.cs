@@ -103,6 +103,17 @@ public static class Utils
     }
 
     /// <summary>
+    /// A simple string truncation method.
+    /// </summary>
+    public static string Truncate(this string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+            return value;
+
+        return $"{value.Substring(0, maxLength)}...";
+    }
+
+    /// <summary>
     /// Double group matching.
     /// </summary>
     public static List<string> ExtractWMICSubItems(this string text)
