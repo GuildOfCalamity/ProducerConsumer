@@ -106,7 +106,7 @@ public class ChannelManager
     /// <summary>
     /// Adds multiple <see cref="ChannelItem"/>s using TryWrite.
     /// </summary>
-    public bool AddItems(List<ChannelItem> items)
+    public bool AddItems(IList<ChannelItem> items)
     {
         if (items == null || _adding)
             return false;
@@ -352,7 +352,7 @@ public class ChannelManager
     /// Is our agent thread suspended?
     /// </summary>
     /// <returns>true if agent thread is running, false otherwise</returns>
-    public bool IsAgentAlive() => !_suspended;
+    public bool IsThreadSuspended() => !_suspended;
 
     /// <summary>
     /// Are any actions currently running?
@@ -420,10 +420,9 @@ public class ChannelManager
                 }
             }
 
-            //if (_debug) { Console.Write($"•"); }
-
             Thread.Sleep(_resolution); // go easy on the CPU
 
+            // If we have anything new then extract and invoke it.
             while (channel?.Reader.Count > 0 && !_adding)
             {
                 if (channel.Reader.TryRead(out ChannelItem? item))
@@ -451,7 +450,6 @@ public class ChannelManager
                         catch (Exception ex)
                         {
                             OnError?.Invoke(item, $"\"{item?.Title}\" ID #{item?.Id} caused exception: {ex.Message}");
-
                             if (_debug)
                             {
                                 Console.ForegroundColor = ConsoleColor.Red;
@@ -466,12 +464,10 @@ public class ChannelManager
                     }
                     else
                     {
-                        // We could also employ a CancellationTokenRegistration ctr = item.Token.Register(() => { });
                         OnCancel?.Invoke(item, $"\"{item?.Title}\" ID #{item?.Id} was canceled! [{DateTime.Now}]");
-
                         if (_debug)
                         {
-                            string leftSide = $"Abandoning \"{item?.Title}\" ID #{item?.Id}, since token has expired.";
+                            string leftSide = $"Abandoning \"{item?.Title}\" ID #{item?.Id}, token has expired.";
                             string rightSide = $"Item Count: {GetItemCount()}";
                             Console.ForegroundColor = ConsoleColor.Magenta;
                             Console.WriteLine(string.Format("{0,-46}{1,30}", leftSide, rightSide)); // negative left-justifies, while positive right-justifies
@@ -483,7 +479,6 @@ public class ChannelManager
                 {
                     // Item will most likely be null, but we'll pass it anyways.
                     OnWarning?.Invoke(item, $"Could not read from the Channel during the service loop.");
-
                     if (_debug)
                     {
                         Console.ForegroundColor = ConsoleColor.Yellow;

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -218,6 +219,24 @@ public class ScheduleManager
     }
 
     /// <summary>
+    /// Adds a list of <see cref="ActionItem"/>s to the <see cref="BlockingCollection{T}{T}"/>.
+    /// </summary>
+    /// <param name="items"><see cref="IList{QueueItem}"/></param>
+    public void AddItems(IList<ActionItem> items)
+    {
+        if (items == null || items.Count == 0)
+            return;
+
+        foreach (ActionItem item in items)
+        {
+            if (!_itemList.TryAdd(item))
+            {
+                OnError?.Invoke(item, $"\"{item?.Title}\" could not be added to the collection!");
+            }
+        }
+    }
+
+    /// <summary>
     /// Signal the agent thread to close shop.
     /// </summary>
     /// <param name="waitForRemaining">To block or not to block, that is the question.</param>
@@ -403,7 +422,7 @@ public class ScheduleManager
     /// Is our agent thread suspended?
     /// </summary>
     /// <returns>true if agent thread is running, false otherwise</returns>
-    public bool IsAgentAlive() => !_suspended;
+    public bool IsThreadSuspended() => !_suspended;
 
     /// <summary>
     /// Are any tasks currently running?
