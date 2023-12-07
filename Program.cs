@@ -34,6 +34,7 @@ public class Program
     static Thread? _adder = null;
     static ScheduleManager _scheduler = new(true);
     static ChannelManager _chanman = new(true);
+    static ConcurrentManager _queueman = new(true);
 
     /// <summary>
     /// Macro for <see cref="Exception"/> objects.
@@ -122,12 +123,23 @@ public class Program
 
         #region [Setup the ChannelManager's delegates]
         _chanman.OnBeginInvoke += (item, msg) => { $"••BEGIN••••• {msg}".Announcement(); /* var ci = item as ChannelItem; */ };
-        _chanman.OnEndInvoke += (item, msg) =>   { $"••END••••••• {msg}".Announcement(); /* var ci = item as ChannelItem; */ };
+        _chanman.OnEndInvoke += (item, msg) =>   { $"••END••••••• {msg}".Announcement(); };
         _chanman.OnCancel += (item, msg) =>      { $"••CANCEL•••• {msg}".Announcement(); };
         _chanman.OnError += (item, msg) =>       { $"••ERROR••••• {msg}".Announcement(); };
         _chanman.OnWarning += (item, msg) =>     { $"••WARNING••• {msg}".Announcement(); };
         _chanman.OnShutdown += (msg) =>                { $"••SHUTDOWN•• {msg}".Announcement(); };
         _chanman.ChangeResolution(1000);
+        #endregion
+
+        #region [Setup the ConcurrentlManager's delegates]
+        _queueman.OnBeginInvoke += (item, msg) => { $"••BEGIN••••• {msg}".Announcement(); /* var ci = item as QueueItem; */ };
+        _queueman.OnEndInvoke += (item, msg) =>   { $"••END••••••• {msg}".Announcement(); };
+        _queueman.OnCancel += (item, msg) =>      { $"••CANCEL•••• {msg}".Announcement(); };
+        _queueman.OnError += (item, msg) =>       { $"••ERROR••••• {msg}".Announcement(); };
+        _queueman.OnWarning += (item, msg) =>     { $"••WARNING••• {msg}".Announcement(); };
+        _queueman.OnShutdown += (msg) =>                { $"••SHUTDOWN•• {msg}".Announcement(); };
+        _queueman.OnExhausted += (msg) =>               { $"••EXHAUSTED•• {msg}".Announcement(); };
+        _queueman.ChangeResolution(1000);
         #endregion
 
         #region [Setup the ScheduleManager's delegates]
@@ -185,9 +197,12 @@ public class Program
                 Console.WriteLine($"⇒ Press 'A' to add {nameof(ChannelItem)}s.");
                 break;
             case 4:
-                TestScheduler();
+                TestScheduleManager();
                 break;
             case 5:
+                TestConcurrentManager(Random.Shared.Next(10, _maxDesired * 10));
+                break;
+            case 6:
                 if (Environment.OSVersion.Platform == PlatformID.Win32NT)
                     TestWMIC();
                 break;
@@ -239,9 +254,15 @@ public class Program
             {
                 config!.TestNumber = 4;
                 Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
-                TestScheduler();
+                TestScheduleManager();
             }
             else if (_conKey == ConsoleKey.D5)
+            {
+                config!.TestNumber = 5;
+                Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
+                TestConcurrentManager(Random.Shared.Next(10, _maxDesired * 10));
+            }
+            else if (_conKey == ConsoleKey.D6)
             {
                 config!.TestNumber = 5;
                 if (Environment.OSVersion.Platform == PlatformID.Win32NT)
@@ -287,7 +308,7 @@ public class Program
                 }
                 #endregion
             }
-            else if (_conKey == ConsoleKey.D6)
+            else if (_conKey == ConsoleKey.D7)
             {
                 Console.WriteLine($"⇒ Collecting services...");
                 var services = GetWindowsServices();
@@ -300,7 +321,7 @@ public class Program
                     catch (KeyNotFoundException) { }
                 }
             }
-            else if (_conKey == ConsoleKey.D7)
+            else if (_conKey == ConsoleKey.D8)
             {
                 Console.WriteLine($"⇒ Collecting processes...");
                 var procs = GetWindowsProcesses();
@@ -328,6 +349,12 @@ public class Program
                     _scheduler.ClearSchedule();
                     _clearFlag = true;
                 }
+                else if (config?.TestNumber == 5)
+                {
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    Console.WriteLine($"\r\n⇒ Clearing {_queueman.GetItemCount()} from the Queue.");
+                    _queueman.ClearItems();
+                }
             }
             else if (_conKey == ConsoleKey.B)
             {
@@ -349,10 +376,14 @@ public class Program
                     // This will not stop execution of the items if we're already inside the while loop.
                     _chanman.Toggle();
                     Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\r\nIsAgentAlive? ⇒ {_chanman.IsAgentAlive()}");
+                    Console.WriteLine($"\r\nIs Channel Thread Suspended? ⇒ {_chanman.IsThreadSuspended()}");
                 }
                 else if (config?.TestNumber == 4) 
-                { 
+                {
+                    // This will not stop execution of the items if we're already inside the while loop.
+                    _scheduler.Toggle();
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    Console.WriteLine($"\r\nIs Scheduler Thread Suspended? ⇒ {_scheduler.IsThreadSuspended()}");
                 }
             }
          }
@@ -369,6 +400,11 @@ public class Program
         {
             Console.WriteLine($"\r\n⇒ {_scheduler.GetInactivatedCount()} items remain in the scheduler. ");
             _scheduler.Shutdown(false); // Inform the agent to close shop.
+        }
+        else if (config?.TestNumber == 5)
+        {
+            Console.WriteLine($"\r\n⇒ {_queueman.GetItemCount()} items remain in the queue. ");
+            _queueman.Shutdown(false); // Inform the agent to close shop.
         }
         _shutdown = true; // signal any local thread loops
         #endregion
@@ -505,8 +541,9 @@ public class Program
         Console.WriteLine($"   2) Test ParallelThreading (Channel)   ");
         Console.WriteLine($"   3) Test ChannelMonitor                ");
         Console.WriteLine($"   4) Test Scheduler (BlockingCollection)");
+        Console.WriteLine($"   5) Test Queue (ConcurrentQueue)       ");
         if (Environment.OSVersion.Platform == PlatformID.Win32NT)
-            Console.WriteLine($"   5) Test WMIC                          ");
+            Console.WriteLine($"   6) Test WMIC                          ");
         Console.WriteLine($"   B) Check if agent is busy             ");
         Console.WriteLine($"   C) Clear items                        ");
         Console.WriteLine($"   T) Toggle agent thread                ");
@@ -897,11 +934,35 @@ public class Program
     }
 
     /// <summary>
+    /// Testing the <see cref="ConcurrentManager"/> class.
+    /// </summary>
+    static void TestConcurrentManager(int maxItems)
+    {
+        #region [ConcurrentQueue]
+        for (int idx = 0; idx < maxItems; idx++)
+        {
+            int trapped = idx + 1;
+            string title = Utils.GetRandomName();
+            int secDelay = Random.Shared.Next(1, 11);
+            $"⇒ Adding '{title}' to the queue.".Announcement();
+            CancellationTokenSource qiCts = new CancellationTokenSource(TimeSpan.FromSeconds(Random.Shared.Next(5, 61)));
+            _queueman.AddItem(new QueueItem(trapped, $"{title}", () =>
+            {
+                if (Random.Shared.Next(1, 100) >= 99)
+                    throw new Exception("******* I'm not a real error. *******");
+                else
+                    Thread.Sleep(Random.Shared.Next(50, 601));
+            }, qiCts.Token));
+        }
+        #endregion
+    }
+
+    /// <summary>
     /// There are two times to consider:
     ///  1. How long will the action run for?
     ///  2. What time (from now) will the action start?
     /// </summary>
-    static void TestScheduler()
+    static void TestScheduleManager()
     {
         #region [Add Items To Scheduler]
         for (int idx = 0; idx < _maxDesired; idx++)
