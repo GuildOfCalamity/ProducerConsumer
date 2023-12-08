@@ -16,7 +16,7 @@ namespace ProducerConsumer;
 /// If an <see cref="ActionItem"/> is found that matches the criteria then
 /// it will be invoked inside of a <see cref="Task"/>.
 /// </summary>
-public class ScheduleManager
+public class ScheduleManager : IDisposable
 {
     #region [Properties]
     int _resolution = 100;
@@ -207,9 +207,12 @@ public class ScheduleManager
     /// <param name="item"><see cref="ActionItem"/></param>
     public void ScheduleItem(ActionItem item)
     {
-        // Add basic checks for first-time users not familiar with the order of operations.
+        // Check for disposed object.
         if (_shutdown)
             throw new Exception($"Thread has been shutdown, you must create a new {nameof(ScheduleManager)}.");
+
+        if (item == null)
+            return;
 
         if (!_itemList.TryAdd(item))
         {
@@ -222,8 +225,12 @@ public class ScheduleManager
     /// Adds a list of <see cref="ActionItem"/>s to the <see cref="BlockingCollection{T}{T}"/>.
     /// </summary>
     /// <param name="items"><see cref="IList{QueueItem}"/></param>
-    public void AddItems(IList<ActionItem> items)
+    public void ScheduleItems(IList<ActionItem> items)
     {
+        // Check for disposed object.
+        if (_shutdown)
+            throw new Exception($"Thread has been shutdown, you must create a new {nameof(ScheduleManager)}.");
+
         if (items == null || items.Count == 0)
             return;
 
@@ -439,6 +446,14 @@ public class ScheduleManager
     {
         if (_resolution > 0)
             _resolution = milliseconds;
+    }
+
+    /// <summary>
+    /// Triggers a shutdown for the thread.
+    /// </summary>
+    public void Dispose()
+    {
+        Shutdown(false);
     }
 
     /// <summary>

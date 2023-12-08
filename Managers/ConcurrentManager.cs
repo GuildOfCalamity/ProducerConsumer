@@ -13,7 +13,7 @@ namespace ProducerConsumer;
 /// <summary>
 /// A basic home-brew channel implementation.
 /// </summary>
-public class ConcurrentManager
+public class ConcurrentManager : IDisposable
 {
     bool _debug = false;
     bool _suspended = false;
@@ -170,6 +170,10 @@ public class ConcurrentManager
     /// <param name="item"><see cref="QueueItem"/></param>
     public void AddItem(QueueItem item)
     {
+        // Check for disposed object.
+        if (_shutdown)
+            throw new Exception($"Thread has been shutdown, you must create a new {nameof(ConcurrentManager)}.");
+
         if (item == null)
             return;
 
@@ -184,6 +188,10 @@ public class ConcurrentManager
     /// <param name="items"><see cref="List{QueueItem}"/></param>
     public void AddItems(IList<QueueItem> items)
     {
+        // Check for disposed object.
+        if (_shutdown)
+            throw new Exception($"Thread has been shutdown, you must create a new {nameof(ConcurrentManager)}.");
+
         if (items == null || items.Count == 0)
             return;
 
@@ -202,6 +210,10 @@ public class ConcurrentManager
     /// <returns><see cref="QueueItem"/></returns>
     public QueueItem? Read(CancellationToken token = default)
     {
+        // Check for disposed object.
+        if (_shutdown)
+            throw new Exception($"Thread has been shutdown, you must create a new {nameof(ConcurrentManager)}.");
+
         _semaphore.Wait(token); // wait
         if (_queue.TryDequeue(out QueueItem? item))
             return item;
@@ -216,6 +228,10 @@ public class ConcurrentManager
     /// <returns><see cref="QueueItem"/></returns>
     public async ValueTask<QueueItem?> ReadAsync(CancellationToken token = default)
     {
+        // Check for disposed object.
+        if (_shutdown)
+            throw new Exception($"Thread has been shutdown, you must create a new {nameof(ConcurrentManager)}.");
+
         await _semaphore.WaitAsync(token).ConfigureAwait(false); // wait
         if (_queue.TryDequeue(out QueueItem? item))
             return item;
@@ -267,6 +283,14 @@ public class ConcurrentManager
 
             _agent.Join();
         }
+    }
+
+    /// <summary>
+    /// Triggers a shutdown for the thread.
+    /// </summary>
+    public void Dispose()
+    {
+        Shutdown(false);
     }
     #endregion
 }

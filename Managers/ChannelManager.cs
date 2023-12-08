@@ -16,7 +16,7 @@ namespace ProducerConsumer;
 /// If you are interested in Channels, check out Stephen Toub's blog post:
 /// https://devblogs.microsoft.com/dotnet/an-introduction-to-system-threading-channels/
 /// </summary>
-public class ChannelManager
+public class ChannelManager : IDisposable
 {
     bool _debug = false;
     bool _suspended = false;
@@ -72,6 +72,10 @@ public class ChannelManager
     /// </summary>
     public bool AddItem(ChannelItem item)
     {
+        // Check for disposed object.
+        if (_shutdown)
+            throw new Exception($"Thread has been shutdown, you must create a new {nameof(ChannelManager)}.");
+
         if (item == null || _adding)
             return false;
 
@@ -108,6 +112,10 @@ public class ChannelManager
     /// </summary>
     public bool AddItems(IList<ChannelItem> items)
     {
+        // Check for disposed object.
+        if (_shutdown)
+            throw new Exception($"Thread has been shutdown, you must create a new {nameof(ChannelManager)}.");
+
         if (items == null || _adding)
             return false;
 
@@ -147,6 +155,10 @@ public class ChannelManager
     /// </summary>
     public bool AddItem(ChannelItem item, CancellationToken token = default)
     {
+        // Check for disposed object.
+        if (_shutdown)
+            throw new Exception($"Thread has been shutdown, you must create a new {nameof(ChannelManager)}.");
+
         if (item == null || _adding)
             return false;
 
@@ -189,10 +201,12 @@ public class ChannelManager
     /// </summary>
     public ValueTask<bool> AddItemValueTask(ChannelItem item, CancellationToken token = default)
     {
+        // Check for disposed object.
+        if (_shutdown)
+            throw new Exception($"Thread has been shutdown, you must create a new {nameof(ChannelManager)}.");
+
         if (item == null || _adding)
-        {
             return new ValueTask<bool>(false);
-        }
 
         try
         {
@@ -241,6 +255,10 @@ public class ChannelManager
     /// </summary>
     public async ValueTask WaitToWriteAsync(ChannelItem item, CancellationToken token)
     {
+        // Check for disposed object.
+        if (_shutdown)
+            throw new Exception($"Thread has been shutdown, you must create a new {nameof(ChannelManager)}.");
+
         if (item == null)
             return;
 
@@ -276,6 +294,10 @@ public class ChannelManager
     /// </summary>
     public async ValueTask<ChannelItem?> WaitToReadAsync(CancellationToken token)
     {
+        // Check for disposed object.
+        if (_shutdown)
+            throw new Exception($"Thread has been shutdown, you must create a new {nameof(ChannelManager)}.");
+
         while (true)
         {
             if (!await channel!.Reader.WaitToReadAsync(token).ConfigureAwait(false))
@@ -496,6 +518,14 @@ public class ChannelManager
         OnShutdown?.Invoke($"{_agent?.Name} thread {Thread.CurrentThread.ManagedThreadId} finished. [{DateTime.Now}]");
         if (_debug)
             Console.WriteLine($"⇒ Exiting {_agent?.Name} thread.");
+    }
+
+    /// <summary>
+    /// Triggers a shutdown for the thread.
+    /// </summary>
+    public void Dispose()
+    {
+        Shutdown(false);
     }
 }
 
