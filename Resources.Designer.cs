@@ -65,20 +65,7 @@ namespace ProducerConsumer {
         ///░░▀█▀░░█▀▀░░█▀▀░░
         ///░░░█░░░█░░░░▀▀█░░
         ///░░▀▀▀░░▀▀▀░░▀▀▀░░
-        ///░░░░░░░░░░░░░░░░░
-        ///
-        ///
-        ///
-        ///
-        /// ███████████ █████                            
-        ///░█░░░███░░░█░░███                             
-        ///░   ░███  ░  ░███████    ██████               
-        ///    ░███     ░███░░███  ███░░███              
-        ///    ░███     ░███ ░███ ░███████               
-        ///    ░███     ░███ ░███ ░███░░░                
-        ///    █████    ████ █████░░██████               
-        ///   ░░░░░    ░░░░ ░░░░░  ░░░░░░                
-        ///                          [rest of string was truncated]&quot;;.
+        ///░░░░░░░░░░░░░░░░░.
         /// </summary>
         internal static string ASCII_Logo {
             get {
@@ -89,9 +76,9 @@ namespace ProducerConsumer {
         /// <summary>
         ///   Looks up a localized resource of type System.Drawing.Icon similar to (Icon).
         /// </summary>
-        internal static System.Drawing.Icon CarWash {
+        internal static System.Drawing.Icon Logo {
             get {
-                object obj = ResourceManager.GetObject("CarWash", resourceCulture);
+                object obj = ResourceManager.GetObject("Logo", resourceCulture);
                 return ((System.Drawing.Icon)(obj));
             }
         }

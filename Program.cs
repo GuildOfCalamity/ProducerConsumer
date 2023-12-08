@@ -15,6 +15,7 @@ namespace ProducerConsumer;
 /// To be able to use Icon assets in this project, the NuGet package "System.Drawing.Common" was added.
 /// To be able to use a Resources.resx file in this project, the NuGet package "System.Resources.Extensions" was added.
 /// NOTE: If you make changes to any embedded resource assets, it is recommended that you rebuild instead of build.
+/// The System.Drawing.Icon type is only supported on Windows 7 (2009) and higher.
 /// My github repos are here <see href="https://github.com/GuildOfCalamity?tab=repositories"/>.
 /// </summary>
 public class Program
@@ -28,11 +29,12 @@ public class Program
     static int _maxDesired = 20;
     static Icon? _iconNormal = null;
     static Icon? _iconWarning = null;
+    static Version _winVersion = new();
     static ConsoleKey _conKey = ConsoleKey.Process;
     static Settings _settings = new();
     static IntPtr _conHwnd = IntPtr.Zero;
     static Thread? _adder = null;
-    static ScheduleManager _scheduler = new(true);
+    static ScheduleManager _schedman = new(true);
     static ChannelManager _chanman = new(true);
     static ConcurrentManager _queueman = new(true);
 
@@ -60,8 +62,27 @@ public class Program
     /// Note that there isn't a way to provide a "cref" to each accessor, only to the property itself.
     /// </para>
     /// </remarks>
-    public string Title { get; set; } = "ProducerConsumer";
+    public static string Title { get; set; } = AppDomain.CurrentDomain.FriendlyName.Replace(".exe", "").SeparateCamelCase();
     #endregion
+
+    /// <summary>
+    /// Domain exception handler.
+    /// </summary>
+    static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        Console.CursorVisible = true;
+        Console.WriteLine("!!! Caught unhandled exception event on " + DateTime.Now.ToLongDateString() + " at " + DateTime.Now.ToLongTimeString() + " !!!");
+        var ex = e.ExceptionObject as Exception;
+        if (ex != null)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine(FormatException(ex));
+            Console.ForegroundColor = ConsoleColor.Gray;
+        }
+        // In the event that we're launched from a shortcut,
+        // allow enough pause for the user to see the error.
+        Thread.Sleep(5000);
+    }
 
     static void Main(string[] args)
     {
@@ -104,10 +125,10 @@ public class Program
         Console.WriteLine($"⇒ Windows version {Environment.OSVersion.Version} is being reported from the environment.");
         Console.WriteLine($"⇒ Runtime is here \"{RuntimeEnvironment.GetRuntimeDirectory()}\"");
         Console.WriteLine($"⇒ Current process is \"{Process.GetCurrentProcess().MainModule?.FileName}\"");
-        if (Environment.OSVersion.Platform == PlatformID.Win32NT)
-        {
-            // Configure embedded resources.
-            _iconNormal = Resources.ResourceManager.GetObject("CarWash") as Icon;
+        //_winVersion = Utils.GetOSMajorAndMinor();
+        if (Utils.IsWindowsCompatible())
+        {   // Configure embedded resources.
+            _iconNormal = Resources.ResourceManager.GetObject("Logo") as Icon;
             _iconWarning = Resources.ResourceManager.GetObject("Warning") as Icon;
             // Update the console window icon.
             IconUpdater.SetConsoleIconAtRuntime(_iconNormal);
@@ -138,17 +159,20 @@ public class Program
         _queueman.OnError += (item, msg) =>       { $"••ERROR••••• {msg}".Announcement(); };
         _queueman.OnWarning += (item, msg) =>     { $"••WARNING••• {msg}".Announcement(); };
         _queueman.OnShutdown += (msg) =>                { $"••SHUTDOWN•• {msg}".Announcement(); };
-        _queueman.OnExhausted += (msg) =>               { $"••EXHAUSTED•• {msg}".Announcement(); };
+        _queueman.OnExhausted += (msg) =>               { 
+            $"••EXHAUSTED•• {msg}".Announcement();
+            TestConcurrentManager(Random.Shared.Next(10, _maxDesired * 10));
+        };
         _queueman.ChangeResolution(1000);
         #endregion
 
         #region [Setup the ScheduleManager's delegates]
-        _scheduler.OnInvoke += (item, msg) =>  { $"••INVOKE•••• {msg}".Announcement(); /* var ai = item as ActionItem; */ };
-        _scheduler.OnCancel += (item, msg) =>  { $"••CANCEL•••• {msg}".Announcement(); };
-        _scheduler.OnError += (item, msg) =>   { $"••ERROR••••• {msg}".Announcement(); };
-        _scheduler.OnWarning += (item, msg) => { $"••WARNING••• {msg}".Announcement(); };
-        _scheduler.OnShutdown += (msg) =>            { $"••SHUTDOWN•• {msg}".Announcement(); };
-        _scheduler.OnExhausted += (msg) =>           { $"••EXHAUSTED•• {msg}".Announcement();
+        _schedman.OnInvoke += (item, msg) =>  { $"••INVOKE•••• {msg}".Announcement(); /* var ai = item as ActionItem; */ };
+        _schedman.OnCancel += (item, msg) =>  { $"••CANCEL•••• {msg}".Announcement(); };
+        _schedman.OnError += (item, msg) =>   { $"••ERROR••••• {msg}".Announcement(); };
+        _schedman.OnWarning += (item, msg) => { $"••WARNING••• {msg}".Announcement(); };
+        _schedman.OnShutdown += (msg) =>            { $"••SHUTDOWN•• {msg}".Announcement(); };
+        _schedman.OnExhausted += (msg) =>           { $"••EXHAUSTED•• {msg}".Announcement();
             if (!_clearFlag)
             {
                 #region [Test reusing the Scheduler]
@@ -162,7 +186,7 @@ public class Program
                     DateTime runTime = DateTime.Now.AddSeconds(secDelay);
                     $"⇒ {title} will run {runTime.ToLongTimeString()}".Announcement();
                     CancellationTokenSource aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-                    _scheduler.ScheduleItem(new ActionItem(
+                    _schedman.ScheduleItem(new ActionItem(
                         trapped,
                         $"{title} #{trapped}",
                         delegate ()
@@ -203,7 +227,7 @@ public class Program
                 TestConcurrentManager(Random.Shared.Next(10, _maxDesired * 10));
                 break;
             case 6:
-                if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+                if (Utils.IsWindowsCompatible())
                     TestWMIC();
                 break;
             default:
@@ -226,7 +250,9 @@ public class Program
             {
                 config!.TestNumber = 2;
                 Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
-                Task.Run(async () => await TestParallelThreadingChannel()).GetAwaiter().GetResult();
+                //Task.Run(async () => await TestParallelThreadingChannel()).GetAwaiter().GetResult();
+                var rez = TaskTimer.Start(async () => { await TestParallelThreadingChannel(); }).GetAwaiter().GetResult();
+                Console.WriteLine($"⇒ Waited {rez.Duration.GetReadableTime()}");
             }
             else if (_conKey == ConsoleKey.D3)
             {
@@ -265,7 +291,7 @@ public class Program
             else if (_conKey == ConsoleKey.D6)
             {
                 config!.TestNumber = 5;
-                if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+                if (Utils.IsWindowsCompatible())
                 {
                     Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
                     #region [Gathering system data from cmdline]
@@ -345,8 +371,8 @@ public class Program
                 else if (config?.TestNumber == 4)
                 {
                     Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\r\n⇒ Clearing {_scheduler.GetInactivatedCount()} items from the scheduler!");
-                    _scheduler.ClearSchedule();
+                    Console.WriteLine($"\r\n⇒ Clearing {_schedman.GetInactivatedCount()} items from the scheduler!");
+                    _schedman.ClearSchedule();
                     _clearFlag = true;
                 }
                 else if (config?.TestNumber == 5)
@@ -366,7 +392,7 @@ public class Program
                 else if (config?.TestNumber == 4)
                 {
                     Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"\r\n⇒ Still waiting to be activated: {_scheduler.GetInactivatedCount()}");
+                    Console.WriteLine($"\r\n⇒ Still waiting to be activated: {_schedman.GetInactivatedCount()}");
                 }
             }
             else if (_conKey == ConsoleKey.T)
@@ -381,10 +407,14 @@ public class Program
                 else if (config?.TestNumber == 4) 
                 {
                     // This will not stop execution of the items if we're already inside the while loop.
-                    _scheduler.Toggle();
+                    _schedman.Toggle();
                     Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\r\nIs Scheduler Thread Suspended? ⇒ {_scheduler.IsThreadSuspended()}");
+                    Console.WriteLine($"\r\nIs Scheduler Thread Suspended? ⇒ {_schedman.IsThreadSuspended()}");
                 }
+            }
+            else
+            {
+                ShowMenu();
             }
          }
         #endregion
@@ -394,23 +424,53 @@ public class Program
         if (config?.TestNumber == 3)
         {
             Console.WriteLine($"\r\n⇒ {_chanman.GetItemCount()} items remain in the manager. ");
-            _chanman.Shutdown(false); // Inform the agent to close shop.
         }
         else if (config?.TestNumber == 4)
         {
-            Console.WriteLine($"\r\n⇒ {_scheduler.GetInactivatedCount()} items remain in the scheduler. ");
-            _scheduler.Shutdown(false); // Inform the agent to close shop.
+            Console.WriteLine($"\r\n⇒ {_schedman.GetInactivatedCount()} items remain in the scheduler. ");
         }
         else if (config?.TestNumber == 5)
         {
             Console.WriteLine($"\r\n⇒ {_queueman.GetItemCount()} items remain in the queue. ");
-            _queueman.Shutdown(false); // Inform the agent to close shop.
         }
-        _shutdown = true; // signal any local thread loops
+        
+        // Inform the agents to close shop.
+        _schedman.Dispose();
+        _queueman.Dispose();
+        _chanman.Dispose();
+        
+        // Signal any local thread loops.
+        _shutdown = true;
         #endregion
 
         Console.WriteLine("\r\n⇒ Closing... ");
         Thread.Sleep(1800);
+    }
+
+    /// <summary>
+    /// Display options menu to user.
+    /// </summary>
+    public static void ShowMenu()
+    {
+        string leftSide = $"{Title}";
+        string rightSide = $"v{Assembly.GetExecutingAssembly().GetName().Version}";
+        Console.WriteLine();
+        Console.WriteLine($"───────────────────────────────────────────────────");
+        Console.WriteLine(string.Format(" {0,-30}{1,20}", leftSide, rightSide));
+
+        Console.WriteLine($"───────────────────────────────────────────────────");
+        Console.WriteLine($"   1) Test SequentialThreading (Threading.Channels)");
+        Console.WriteLine($"   2) Test ParallelThreading   (Threading.Channels)");
+        Console.WriteLine($"   3) Test ChannelManager      (Threading.Channels)");
+        Console.WriteLine($"   4) Test ScheduleManager     (BlockingCollection)");
+        Console.WriteLine($"   5) Test QueueManager        (ConcurrentQueue)   ");
+        if (Utils.IsWindowsCompatible())
+            Console.WriteLine($"   6) Test WMIC                                    ");
+        Console.WriteLine($"   B) Check if agent is busy                       ");
+        Console.WriteLine($"   C) Clear items                                  ");
+        Console.WriteLine($"   T) Toggle agent thread                          ");
+        Console.WriteLine($" Esc) Exit application                             ");
+        Console.WriteLine($"───────────────────────────────────────────────────");
     }
 
     /// <summary>
@@ -526,302 +586,6 @@ public class Program
             }
         }
     }
-
-
-    /// <summary>
-    /// Display options menu to user.
-    /// </summary>
-    public static void ShowMenu()
-    {
-        Console.WriteLine();
-        Console.WriteLine($"─────────────────────────────────────────");
-        Console.WriteLine($"   {AppDomain.CurrentDomain.FriendlyName.Replace(".exe", "")} v{Assembly.GetExecutingAssembly().GetName().Version}");
-        Console.WriteLine($"─────────────────────────────────────────");
-        Console.WriteLine($"   1) Test SequentialThreading (Channel) ");
-        Console.WriteLine($"   2) Test ParallelThreading (Channel)   ");
-        Console.WriteLine($"   3) Test ChannelMonitor                ");
-        Console.WriteLine($"   4) Test Scheduler (BlockingCollection)");
-        Console.WriteLine($"   5) Test Queue (ConcurrentQueue)       ");
-        if (Environment.OSVersion.Platform == PlatformID.Win32NT)
-            Console.WriteLine($"   6) Test WMIC                          ");
-        Console.WriteLine($"   B) Check if agent is busy             ");
-        Console.WriteLine($"   C) Clear items                        ");
-        Console.WriteLine($"   T) Toggle agent thread                ");
-        Console.WriteLine($" Esc) Exit application                   ");
-        Console.WriteLine($"─────────────────────────────────────────");
-    }
-
-    #region [WMIC Stuff]
-    /// <summary>
-    /// Use the Windows Management Instrumentation to gather basic info about the machine.
-    /// </summary>
-    static void TestWMIC()
-    {
-        try
-        {
-            // For Windows only.
-            var os = GetOSSettings();
-            // CodePage 1252 character encoding is a superset of ISO 8859-1.
-            Console.WriteLine($"⇒ {os["Caption"]} • {os["OSArchitecture"]} • v{os["Version"]}");
-            Console.WriteLine($"⇒ LastBoot {WMICOffsetConversion(os["LastBootUpTime"])} • InstallDate {WMICOffsetConversion(os["InstallDate"])}");
-            Console.WriteLine($"⇒ CodePage {os["CodeSet"]} • {os["SystemDirectory"]} • {os["CSName"]} • Status {os["Status"]}");
-            Console.WriteLine($"⇒ BootDevice \"{os["BootDevice"]}\" • SystemDevice \"{os["SystemDevice"]}\"");
-            Console.WriteLine($"⇒ Organization \"{os["Organization"]}\" • SerialNumber \"{os["SerialNumber"]}\"");
-            //var cpu = GetCPUSettings();
-            //Console.WriteLine($"⇒ Processor \"{cpu["Name"]}\" • Cores \"{cpu["NumberOfCores"]}\"");
-        }
-        catch (KeyNotFoundException) { }
-    }
-
-    /// <summary>
-    /// The timezone offset in WMIC's date string is "-300", this is not a standard timezone offset format.
-    /// The standard format is "+HH:mm" or "-HH:mm". The "-300" from WMIC is known as the "bias" and represents
-    /// the timezone offset in minutes.
-    /// </summary>
-    static string WMICOffsetConversion(string dateString)
-    {
-        string format = "yyyyMMddHHmmss.ffffffzzz"; // "20231106082826.500000-300"
-
-        // Extract the timezone offset from the date string
-        int timezoneOffsetInMinutes = Int32.Parse(dateString.Substring(dateString.Length - 4));
-
-        // Convert the timezone offset from minutes to the format "+HH:mm" or "-HH:mm"
-        TimeSpan offset = TimeSpan.FromMinutes(timezoneOffsetInMinutes);
-        string newOffset = offset.ToString(@"hh\:mm");
-        if (timezoneOffsetInMinutes < 0)
-            newOffset = "-" + newOffset;
-        else
-            newOffset = "+" + newOffset;
-
-        // Replace the old timezone offset with the new one in the date string
-        dateString = dateString.Remove(dateString.Length - 4) + newOffset;
-
-        // Perform a TryParseExact on our adjusted date string.
-        if (DateTime.TryParseExact(dateString, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime result))
-        {
-            //Console.WriteLine("Converted '{0}' to {1}.", dateString, result);
-            return $"{result}";
-        }
-        else
-        {
-            //Console.WriteLine("Unable to convert '{0}' to a date.", dateString);
-            return $"{dateString}";
-        }
-    }
-
-    /// <summary>
-    /// Windows only.
-    /// </summary>
-    /// <returns><see cref="Dictionary{TKey, TValue}"/></returns>
-    static Dictionary<string,string> GetOSSettings()
-    {
-        Dictionary<string, string> result = new();
-        var lines = CallWMIC("OS");
-        if (lines.Count > 1)
-        {
-            int index = 0;
-            string data = lines[1];
-            Dictionary<string, int> distances = GetDistances(lines[0]);
-            foreach (var kvp in distances)
-            {
-                if (!string.IsNullOrEmpty(kvp.Key))
-                {
-                    string element = $"{kvp.Key}" + new string('.', kvp.Value);
-
-                    if (data.Length >= index + element.Length)
-                    {
-                        string value = $"{data.Substring(index, element.Length)}";
-                        result[$"{kvp.Key}"] = value.Trim();
-                    }
-
-                    index += element.Length;
-                }
-            }
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Windows only.
-    /// </summary>
-    /// <returns><see cref="Dictionary{TKey, TValue}"/></returns>
-    static List<Dictionary<string, string>> GetWindowsServices()
-    {
-        /* [Key Names]
-           AcceptPause  
-           AcceptStop  
-           Caption                                                                             
-           CheckPoint  
-           CreationClassName  
-           DelayedAutoStart  
-           Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
-           DesktopInteract  
-           DisplayName                                                                         
-           ErrorControl             
-           ExitCode  
-           InstallDate  
-           Name                                                    
-           PathName                                                                                                                                                                                                                                                                                                                                                                                                             
-           ProcessId                                          
-           ServiceSpecificExitCode  
-           ServiceType    
-           Started        
-           StartMode  
-           StartName                    
-           State                        
-           Status   
-           SystemCreationClassName  
-           SystemName            
-           TagId          
-           WaitHint  
-        */
-        List<Dictionary<string, string>> result = new();
-        var lines = CallWMIC("SERVICE");
-        // This will contain a line item for every service in the system.
-        if (lines.Count > 1)
-        {
-            Dictionary<string, int> distances = GetDistances(lines[0]);
-            for (int i = 1; i < lines.Count - 1; i++)
-            {
-                int index = 0;
-                string data = lines[i];
-                Dictionary<string, string> individual = new();
-                foreach (var kvp in distances)
-                {
-                    if (!string.IsNullOrEmpty(kvp.Key))
-                    {
-                        string element = $"{kvp.Key}" + new string('.', kvp.Value);
-
-                        if (data.Length >= index + element.Length)
-                        {
-                            string value = $"{data.Substring(index, element.Length)}";
-                            individual[$"{kvp.Key}"] = value.Trim();
-                        }
-                        index += element.Length;
-                    }
-                }
-                result.Add(individual);
-            }
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Windows only.
-    /// </summary>
-    /// <returns><see cref="Dictionary{TKey, TValue}"/></returns>
-    static List<Dictionary<string, string>> GetWindowsProcesses()
-    {
-        /* [Key Names]
-           Caption                                       
-           CommandLine                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
-           CreationClassName  
-           CreationDate               
-           CSCreationClassName   
-           CSName         
-           Description                                   
-           ExecutablePath                                                                                                                                              
-           ExecutionState  
-           Handle  
-           HandleCount  
-           InstallDate  
-           KernelModeTime   
-           MaximumWorkingSetSize  
-           MinimumWorkingSetSize  
-           Name                                          
-           OSCreationClassName    
-           OSName                                                                   
-           OtherOperationCount  
-           OtherTransferCount  
-           PageFaults  
-           PageFileUsage  
-           ParentProcessId  
-           PeakPageFileUsage  
-           PeakVirtualSize  
-           PeakWorkingSetSize  
-           Priority  
-           PrivatePageCount  
-           ProcessId  
-           QuotaNonPagedPoolUsage  
-           QuotaPagedPoolUsage  
-           QuotaPeakNonPagedPoolUsage  
-           QuotaPeakPagedPoolUsage  
-           ReadOperationCount  
-           ReadTransferCount  
-           SessionId  
-           Status  
-           TerminationDate  
-           ThreadCount  
-           UserModeTime  
-           VirtualSize    
-           WindowsVersion  
-           WorkingSetSize  
-           WriteOperationCount  
-           WriteTransferCount          
-        */
-        List<Dictionary<string, string>> result = new();
-        var lines = CallWMIC("PROCESS");
-        // This will contain a line item for every process in the system.
-        if (lines.Count > 1)
-        {
-            Dictionary<string, int> distances = GetDistances(lines[0]);
-            for (int i = 1; i < lines.Count - 1; i++)
-            {
-                int index = 0;
-                string data = lines[i];
-                Dictionary<string, string> individual = new();
-                foreach (var kvp in distances)
-                {
-                    if (!string.IsNullOrEmpty(kvp.Key))
-                    {
-                        string element = $"{kvp.Key}" + new string('.', kvp.Value);
-
-                        if (data.Length >= index + element.Length)
-                        {
-                            string value = $"{data.Substring(index, element.Length)}";
-                            individual[$"{kvp.Key}"] = value.Trim();
-                        }
-                        index += element.Length;
-                    }
-                }
-                result.Add(individual);
-            }
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Windows only.
-    /// </summary>
-    /// <returns><see cref="Dictionary{TKey, TValue}"/></returns>
-    static Dictionary<string, string> GetCPUSettings()
-    {
-        Dictionary<string, string> result = new();
-        var lines = CallWMIC("CPU");
-        if (lines.Count > 1)
-        {
-            int index = 0;
-            string data = lines[1];
-            Dictionary<string, int> distances = GetDistances(lines[0]);
-            foreach (var kvp in distances)
-            {
-                if (!string.IsNullOrEmpty(kvp.Key))
-                {
-                    string element = $"{kvp.Key}" + new string('.', kvp.Value);
-
-                    if (data.Length >= index + element.Length)
-                    {
-                        string value = $"{data.Substring(index, element.Length)}";
-                        result[$"{kvp.Key}"] = value.Trim();
-                    }
-
-                    index += element.Length;
-                }
-            }
-        }
-        return result;
-    }
-    #endregion
 
     /// <summary>
     /// Testing the <see cref="System.Threading.Channels.Channel{T}"/> class.
@@ -973,7 +737,7 @@ public class Program
             DateTime runTime = DateTime.Now.AddSeconds(secDelay);
             $"⇒ {title} will run {runTime.ToLongTimeString()}".Announcement();
             CancellationTokenSource aiCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            _scheduler.ScheduleItem(new ActionItem(
+            _schedman.ScheduleItem(new ActionItem(
                 trapped,
            $"{title} #{trapped}",
                 delegate ()
@@ -992,6 +756,7 @@ public class Program
         #endregion
     }
 
+    #region [Superfluous]
     /// <summary>
     /// A simple try/catch wrapper.
     /// </summary>
@@ -1045,8 +810,8 @@ public class Program
             Console.WriteLine(string.Join(Environment.NewLine, trc));
             Console.ForegroundColor = tmp;
 
-            
-            if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+
+            if (Utils.IsWindowsCompatible())
                 IconUpdater.SetConsoleIconAtRuntime(_iconWarning); // Update the console window icon.
         }
     }
@@ -1109,10 +874,53 @@ public class Program
 
                 //Console.WriteLine($"Key: \"{resourceKey}\"   Value: {resourceValue}");
                 Console.WriteLine($"Key: \"{resourceKey}\" ({resourceValue?.GetType()})");
+
+                if (Utils.IsWindowsCompatible())
+                {
+                    // NOTE: The System.Drawing.Icon type is only supported on Windows 7 (2009) and higher.
+                    Dictionary<string, Icon> icons = new();
+                    if (resourceValue?.GetType() == typeof(Icon))
+                        icons.Add(resourceKey, resourceValue as Icon);
+                }
             }
             Console.WriteLine();
         }
     }
+
+    /// <summary>
+    /// For use with "C:\>wmic computersystem get"
+    /// </summary>
+    static Dictionary<string, int> GetDistances(string text)
+    {
+        int currentIndex = 0;
+        string[] parts = text.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        var distances = new Dictionary<string, int>();
+        for (int i = 0; i < parts.Length - 1; i++)
+        {
+            currentIndex = text.IndexOf(parts[i], currentIndex) + parts[i].Length;
+            int nextIndex = text.IndexOf(parts[i + 1], currentIndex);
+            int gap = Math.Abs(nextIndex - currentIndex);
+            distances[parts[i]] = gap;
+        }
+        return distances;
+    }
+
+    /// <summary>
+    /// Helper to bring console to foreground, will handle minimized state also.
+    /// </summary>
+    static void FocusConsole()
+    {
+        if (_conHwnd == IntPtr.Zero)
+            _conHwnd = ConsoleHelper.GetForegroundWindow();
+
+        if (_conHwnd != IntPtr.Zero)
+        {
+            ConsoleHelper.ShowWindow(_conHwnd, ConsoleHelper.SW_RESTORE);
+            Thread.Sleep(1);
+            ConsoleHelper.SetForegroundWindow(_conHwnd);
+        }
+    }
+    #endregion
 
     #region [Other Tests]
     /// <summary>
@@ -1440,79 +1248,275 @@ public class Program
     }
     #endregion
 
+    #region [WMIC Stuff]
     /// <summary>
-    /// Extracts elements seperated by spaces.
+    /// Use the Windows Management Instrumentation to gather basic info about the machine.
     /// </summary>
-    static string[] SplitString1(string text)
+    static void TestWMIC()
     {
-        return Regex.Split(text, @"\s+");
-        // Traditional method, but not very flexible.
-        return text.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        try
+        {
+            // For Windows only.
+            var os = GetOSSettings();
+            // CodePage 1252 character encoding is a superset of ISO 8859-1.
+            Console.WriteLine($"⇒ {os["Caption"]} • {os["OSArchitecture"]} • v{os["Version"]}");
+            Console.WriteLine($"⇒ LastBoot {WMICOffsetConversion(os["LastBootUpTime"])} • InstallDate {WMICOffsetConversion(os["InstallDate"])}");
+            Console.WriteLine($"⇒ CodePage {os["CodeSet"]} • {os["SystemDirectory"]} • {os["CSName"]} • Status {os["Status"]}");
+            Console.WriteLine($"⇒ BootDevice \"{os["BootDevice"]}\" • SystemDevice \"{os["SystemDevice"]}\"");
+            Console.WriteLine($"⇒ Organization \"{os["Organization"]}\" • SerialNumber \"{os["SerialNumber"]}\"");
+            //var cpu = GetCPUSettings();
+            //Console.WriteLine($"⇒ Processor \"{cpu["Name"]}\" • Cores \"{cpu["NumberOfCores"]}\"");
+        }
+        catch (KeyNotFoundException) { }
     }
 
     /// <summary>
-    /// Extracts elements contained in braces and seperated by spaces.
+    /// The timezone offset in WMIC's date string is "-300", this is not a standard timezone offset format.
+    /// The standard format is "+HH:mm" or "-HH:mm". The "-300" from WMIC is known as the "bias" and represents
+    /// the timezone offset in minutes.
     /// </summary>
-    static List<string> SplitString2(string text)
+    static string WMICOffsetConversion(string dateString)
     {
-        var matches = Regex.Matches(text, @"{[^}]*}|[^ ]+");
-        var parts = new List<string>();
-        foreach (Match match in matches)
+        string format = "yyyyMMddHHmmss.ffffffzzz"; // "20231106082826.500000-300"
+
+        // Extract the timezone offset from the date string
+        int timezoneOffsetInMinutes = Int32.Parse(dateString.Substring(dateString.Length - 4));
+
+        // Convert the timezone offset from minutes to the format "+HH:mm" or "-HH:mm"
+        TimeSpan offset = TimeSpan.FromMinutes(timezoneOffsetInMinutes);
+        string newOffset = offset.ToString(@"hh\:mm");
+        if (timezoneOffsetInMinutes < 0)
+            newOffset = "-" + newOffset;
+        else
+            newOffset = "+" + newOffset;
+
+        // Replace the old timezone offset with the new one in the date string
+        dateString = dateString.Remove(dateString.Length - 4) + newOffset;
+
+        // Perform a TryParseExact on our adjusted date string.
+        if (DateTime.TryParseExact(dateString, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime result))
         {
-            parts.Add(match.Value);
+            //Console.WriteLine("Converted '{0}' to {1}.", dateString, result);
+            return $"{result}";
         }
-        return parts;
+        else
+        {
+            //Console.WriteLine("Unable to convert '{0}' to a date.", dateString);
+            return $"{dateString}";
+        }
     }
 
     /// <summary>
-    /// For use with "C:\>wmic computersystem get"
+    /// Windows only.
     /// </summary>
-    static Dictionary<string, int> GetDistances(string text)
+    /// <returns><see cref="Dictionary{TKey, TValue}"/></returns>
+    static Dictionary<string, string> GetOSSettings()
     {
-        int currentIndex = 0;
-        string[] parts = text.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-        var distances = new Dictionary<string, int>();
-        for (int i = 0; i < parts.Length - 1; i++)
+        Dictionary<string, string> result = new();
+        var lines = CallWMIC("OS");
+        if (lines.Count > 1)
         {
-            currentIndex = text.IndexOf(parts[i], currentIndex) + parts[i].Length;
-            int nextIndex = text.IndexOf(parts[i + 1], currentIndex);
-            int gap = Math.Abs(nextIndex - currentIndex);
-            distances[parts[i]] = gap;
+            int index = 0;
+            string data = lines[1];
+            Dictionary<string, int> distances = GetDistances(lines[0]);
+            foreach (var kvp in distances)
+            {
+                if (!string.IsNullOrEmpty(kvp.Key))
+                {
+                    string element = $"{kvp.Key}" + new string('.', kvp.Value);
+
+                    if (data.Length >= index + element.Length)
+                    {
+                        string value = $"{data.Substring(index, element.Length)}";
+                        result[$"{kvp.Key}"] = value.Trim();
+                    }
+
+                    index += element.Length;
+                }
+            }
         }
-        return distances;
+        return result;
     }
 
     /// <summary>
-    /// Domain exception handler.
+    /// Windows only.
     /// </summary>
-    static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+    /// <returns><see cref="Dictionary{TKey, TValue}"/></returns>
+    static List<Dictionary<string, string>> GetWindowsServices()
     {
-        Console.CursorVisible = true;
-        Console.WriteLine("!!! Unhandled exception event on " + DateTime.Now.ToLongDateString() + " at " + DateTime.Now.ToLongTimeString() + " !!!");
-        var ex = e.ExceptionObject as Exception;
-        if (ex != null) 
+        /* [Key Names]
+           AcceptPause  
+           AcceptStop  
+           Caption                                                                             
+           CheckPoint  
+           CreationClassName  
+           DelayedAutoStart  
+           Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+           DesktopInteract  
+           DisplayName                                                                         
+           ErrorControl             
+           ExitCode  
+           InstallDate  
+           Name                                                    
+           PathName                                                                                                                                                                                                                                                                                                                                                                                                             
+           ProcessId                                          
+           ServiceSpecificExitCode  
+           ServiceType    
+           Started        
+           StartMode  
+           StartName                    
+           State                        
+           Status   
+           SystemCreationClassName  
+           SystemName            
+           TagId          
+           WaitHint  
+        */
+        List<Dictionary<string, string>> result = new();
+        var lines = CallWMIC("SERVICE");
+        // This will contain a line item for every service in the system.
+        if (lines.Count > 1)
         {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine(FormatException(ex));
-            Console.ForegroundColor = ConsoleColor.Gray;
-        }
-        Thread.Sleep(5000);
-    }
-    
-    /// <summary>
-    /// Helper to bring console to foreground, will handle minimized state also.
-    /// </summary>
-    static void FocusConsole()
-    {
-        if (_conHwnd == IntPtr.Zero)
-            _conHwnd = ConsoleHelper.GetForegroundWindow();
+            Dictionary<string, int> distances = GetDistances(lines[0]);
+            for (int i = 1; i < lines.Count - 1; i++)
+            {
+                int index = 0;
+                string data = lines[i];
+                Dictionary<string, string> individual = new();
+                foreach (var kvp in distances)
+                {
+                    if (!string.IsNullOrEmpty(kvp.Key))
+                    {
+                        string element = $"{kvp.Key}" + new string('.', kvp.Value);
 
-        if (_conHwnd != IntPtr.Zero)
-        {
-            ConsoleHelper.ShowWindow(_conHwnd, ConsoleHelper.SW_RESTORE);
-            Thread.Sleep(1);
-            ConsoleHelper.SetForegroundWindow(_conHwnd);
+                        if (data.Length >= index + element.Length)
+                        {
+                            string value = $"{data.Substring(index, element.Length)}";
+                            individual[$"{kvp.Key}"] = value.Trim();
+                        }
+                        index += element.Length;
+                    }
+                }
+                result.Add(individual);
+            }
         }
+        return result;
+    }
+
+    /// <summary>
+    /// Windows only.
+    /// </summary>
+    /// <returns><see cref="Dictionary{TKey, TValue}"/></returns>
+    static List<Dictionary<string, string>> GetWindowsProcesses()
+    {
+        /* [Key Names]
+           Caption                                       
+           CommandLine                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
+           CreationClassName  
+           CreationDate               
+           CSCreationClassName   
+           CSName         
+           Description                                   
+           ExecutablePath                                                                                                                                              
+           ExecutionState  
+           Handle  
+           HandleCount  
+           InstallDate  
+           KernelModeTime   
+           MaximumWorkingSetSize  
+           MinimumWorkingSetSize  
+           Name                                          
+           OSCreationClassName    
+           OSName                                                                   
+           OtherOperationCount  
+           OtherTransferCount  
+           PageFaults  
+           PageFileUsage  
+           ParentProcessId  
+           PeakPageFileUsage  
+           PeakVirtualSize  
+           PeakWorkingSetSize  
+           Priority  
+           PrivatePageCount  
+           ProcessId  
+           QuotaNonPagedPoolUsage  
+           QuotaPagedPoolUsage  
+           QuotaPeakNonPagedPoolUsage  
+           QuotaPeakPagedPoolUsage  
+           ReadOperationCount  
+           ReadTransferCount  
+           SessionId  
+           Status  
+           TerminationDate  
+           ThreadCount  
+           UserModeTime  
+           VirtualSize    
+           WindowsVersion  
+           WorkingSetSize  
+           WriteOperationCount  
+           WriteTransferCount          
+        */
+        List<Dictionary<string, string>> result = new();
+        var lines = CallWMIC("PROCESS");
+        // This will contain a line item for every process in the system.
+        if (lines.Count > 1)
+        {
+            Dictionary<string, int> distances = GetDistances(lines[0]);
+            for (int i = 1; i < lines.Count - 1; i++)
+            {
+                int index = 0;
+                string data = lines[i];
+                Dictionary<string, string> individual = new();
+                foreach (var kvp in distances)
+                {
+                    if (!string.IsNullOrEmpty(kvp.Key))
+                    {
+                        string element = $"{kvp.Key}" + new string('.', kvp.Value);
+
+                        if (data.Length >= index + element.Length)
+                        {
+                            string value = $"{data.Substring(index, element.Length)}";
+                            individual[$"{kvp.Key}"] = value.Trim();
+                        }
+                        index += element.Length;
+                    }
+                }
+                result.Add(individual);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Windows only.
+    /// </summary>
+    /// <returns><see cref="Dictionary{TKey, TValue}"/></returns>
+    static Dictionary<string, string> GetCPUSettings()
+    {
+        Dictionary<string, string> result = new();
+        var lines = CallWMIC("CPU");
+        if (lines.Count > 1)
+        {
+            int index = 0;
+            string data = lines[1];
+            Dictionary<string, int> distances = GetDistances(lines[0]);
+            foreach (var kvp in distances)
+            {
+                if (!string.IsNullOrEmpty(kvp.Key))
+                {
+                    string element = $"{kvp.Key}" + new string('.', kvp.Value);
+
+                    if (data.Length >= index + element.Length)
+                    {
+                        string value = $"{data.Substring(index, element.Length)}";
+                        result[$"{kvp.Key}"] = value.Trim();
+                    }
+
+                    index += element.Length;
+                }
+            }
+        }
+        return result;
     }
 
     /// <summary>
@@ -1661,4 +1665,5 @@ public class Program
             "WMISET             ", // WMI service operational parameters management. 
         };
     }
+    #endregion
 }
