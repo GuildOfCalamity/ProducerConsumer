@@ -82,6 +82,19 @@ public static class Utils
         return false;
     }
 
+    /// <summary>
+    /// For <see cref="System.Drawing.Icon"/> code.
+    /// </summary>
+    /// <returns>true if Windows 7 or higher, false otherwise</returns>
+    public static bool IsWindowsCompatible()
+    {
+        if (Environment.OSVersion.Platform == PlatformID.Win32NT && 
+            Environment.OSVersion.Version >= new Version(6, 1))
+            return true;
+        
+        return false;
+    }
+
     public static string GetReadableTime(this TimeSpan timeSpan)
     {
         // Simplified version:
@@ -103,14 +116,312 @@ public static class Utils
     }
 
     /// <summary>
-    /// A simple string truncation method.
+    /// An updated string truncation helper.
     /// </summary>
-    public static string Truncate(this string value, int maxLength)
+    public static string Truncate(this string text, int maxLength, string mesial = "...")
     {
-        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
-            return value;
+        if (string.IsNullOrEmpty(text))
+            return string.Empty;
 
-        return $"{value.Substring(0, maxLength)}...";
+        if (maxLength > 0 && text.Length > maxLength)
+        {
+            var limit = maxLength / 2;
+            if (limit > 1)
+            {
+                return String.Format("{0}{1}{2}", text.Substring(0, limit).Trim(), mesial, text.Substring(text.Length - limit).Trim());
+            }
+            else
+            {
+                var tmp = text.Length <= maxLength ? text : text.Substring(0, maxLength).Trim();
+                return String.Format("{0}{1}", tmp, mesial);
+            }
+        }
+        return text;
+    }
+
+    /// <summary>
+    /// A string truncation helper.
+    /// </summary>
+    public static string TruncateOld(this string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+
+        // Using LINQ:
+        //return value.Length <= maxLength ? value : new string(value.Take(maxLength).ToArray());
+
+        // Using Substring:
+        var tmp = value.Length <= maxLength ? value : value.Substring(0, maxLength);
+        return $"{tmp}...";
+    }
+
+    /// <summary>
+    /// Extracts elements seperated by spaces.
+    /// </summary>
+    public static string[] SplitStringBySpaces(this string text)
+    {
+        return Regex.Split(text, @"\s+");
+        // Traditional method, but not very flexible.
+        return text.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    /// <summary>
+    /// Extracts elements contained in braces and seperated by spaces.
+    /// </summary>
+    public static List<string> SplitStringBySpacesAndBraces(this string text)
+    {
+        var matches = Regex.Matches(text, @"{[^}]*}|[^ ]+");
+        var parts = new List<string>();
+        foreach (Match match in matches)
+        {
+            parts.Add(match.Value);
+        }
+        return parts;
+    }
+
+    /// <summary>
+    /// ExampleTextSample => Example Text Sample
+    /// </summary>
+    /// <param name="input"></param>
+    /// <returns>space delimited string</returns>
+    public static string SeparateCamelCase(this string input)
+    {
+        if (string.IsNullOrEmpty(input))
+            return input;
+
+        StringBuilder result = new StringBuilder();
+        result.Append(input[0]);
+
+        for (int i = 1; i < input.Length; i++)
+        {
+            if (char.IsUpper(input[i]))
+                result.Append(' ');
+
+            result.Append(input[i]);
+        }
+
+        return result.ToString();
+    }
+
+    /// <summary>
+    /// Helper for parsing command line arguments.
+    /// </summary>
+    /// <param name="inputArray"></param>
+    /// <returns>string array of args excluding the 1st arg</returns>
+    public static string[] IgnoreFirstTakeRest(this string[] inputArray)
+    {
+        if (inputArray.Length > 1)
+            return inputArray.Skip(1).ToArray();
+        else
+            return new string[0];
+    }
+
+    /// <summary>
+    /// Returns the first element from a tokenized string, e.g.
+    /// Input:"{tag}"  Output:"tag"
+    /// </summary>
+    /// <example>
+    /// var clean = ExtractFirst("{tag}", '{', '}');
+    /// </example>
+    public static string ExtractFirst(this string text, char start, char end)
+    {
+        string pattern = @"\" + start + "(.*?)" + @"\" + end; //pattern = @"\{(.*?)\}"
+        Match match = Regex.Match(text, pattern);
+        if (match.Success)
+            return match.Groups[1].Value;
+        else
+            return "";
+    }
+
+    /// <summary>
+    /// Returns the last element from a tokenized string, e.g.
+    /// Input:"{tag}"  Output:"tag"
+    /// </summary>
+    /// <example>
+    /// var clean = ExtractLast("{tag}", '{', '}');
+    /// </example>
+    public static string ExtractLast(this string text, char start, char end)
+    {
+        string pattern = @"\" + start + @"(.*?)\" + end; //pattern = @"\{(.*?)\}"
+        MatchCollection matches = Regex.Matches(text, pattern);
+        if (matches.Count > 0)
+        {
+            Match lastMatch = matches[matches.Count - 1];
+            return lastMatch.Groups[1].Value;
+        }
+        else
+            return "";
+    }
+
+    /// <summary>
+    /// Returns all the elements from a tokenized string, e.g.
+    /// Input:"{tag}"  Output:"tag"
+    /// </summary>
+    public static string[] ExtractAll(this string text, char start, char end)
+    {
+        string pattern = @"\" + start + @"(.*?)\" + end; //pattern = @"\{(.*?)\}"
+        MatchCollection matches = Regex.Matches(text, pattern);
+        string[] results = new string[matches.Count];
+        for (int i = 0; i < matches.Count; i++)
+            results[i] = matches[i].Groups[1].Value;
+
+        return results;
+    }
+
+    /// <summary>
+    /// Returns the specified occurrence of a character in a string.
+    /// </summary>
+    /// <returns>
+    /// Index of requested occurrence if successful, -1 otherwise.
+    /// </returns>
+    /// <example>
+    /// If you wanted to find the second index of the percent character in a string:
+    /// int index = "blah%blah%blah".IndexOfNth('%', 2);
+    /// </example>
+    public static int IndexOfNth(this string input, char character, int position)
+    {
+        int index = -1;
+
+        if (string.IsNullOrEmpty(input))
+            return index;
+
+        for (int i = 0; i < position; i++)
+        {
+            index = input.IndexOf(character, index + 1);
+            if (index == -1) { break; }
+        }
+
+        return index;
+    }
+
+    public static bool HasAlpha(this string str)
+    {
+        if (string.IsNullOrEmpty(str)) { return false; }
+        return str.Any(x => char.IsLetter(x));
+    }
+    public static bool HasAlphaRegex(this string str)
+    {
+        return Regex.IsMatch(str ?? "", @"[+a-zA-Z]+");
+    }
+
+    public static bool HasNumeric(this string str)
+    {
+        if (string.IsNullOrEmpty(str)) { return false; }
+        return str.Any(x => char.IsNumber(x));
+    }
+    public static bool HasNumericRegex(this string str)
+    {
+        return Regex.IsMatch(str ?? "", @"[0-9]+"); // [^\D+]
+    }
+
+    public static bool HasSpace(this string str)
+    {
+        if (string.IsNullOrEmpty(str)) { return false; }
+        return str.Any(x => char.IsSeparator(x));
+    }
+    public static bool HasSpaceRegex(this string str)
+    {
+        return Regex.IsMatch(str ?? "", @"[\s]+");
+    }
+
+    public static bool HasPunctuation(this string str)
+    {
+        if (string.IsNullOrEmpty(str)) { return false; }
+        return str.Any(x => char.IsPunctuation(x));
+    }
+
+    public static bool HasAlphaNumeric(this string str)
+    {
+        if (string.IsNullOrEmpty(str)) { return false; }
+        return str.Any(x => char.IsNumber(x)) && str.Any(x => char.IsLetter(x));
+    }
+    public static bool HasAlphaNumericRegex(this string str)
+    {
+        return Regex.IsMatch(str ?? "", "[a-zA-Z0-9]+");
+    }
+
+    public static string RemoveAlphas(this string str)
+    {
+        return string.Concat(str?.Where(c => char.IsNumber(c) || c == '.') ?? string.Empty);
+    }
+
+    public static string RemoveNumerics(this string str)
+    {
+        return string.Concat(str?.Where(c => char.IsLetter(c)) ?? string.Empty);
+    }
+
+    public static string RemoveExtraSpaces(this string strText)
+    {
+        if (!string.IsNullOrEmpty(strText))
+            strText = Regex.Replace(strText, @"\s+", " ");
+
+        return strText;
+    }
+
+    public static Task<List<T>> ToListAsync<T>(this IAsyncEnumerable<T> items)
+    {
+        if (items is null)
+            throw new ArgumentNullException(nameof(items));
+
+        return Implementation(items);
+
+        static async Task<List<T>> Implementation(IAsyncEnumerable<T> items)
+        {
+            var rv = new List<T>();
+            await foreach (var item in items)
+            {
+                rv.Add(item);
+            }
+            return rv;
+        }
+    }
+
+    public static void AddRange<T>(this ICollection<T> collection, IEnumerable<T>? toAdd)
+    {
+        if (collection is null)
+            throw new ArgumentNullException(nameof(collection));
+
+        if (toAdd != null)
+        {
+            foreach (var item in toAdd)
+                collection.Add(item);
+        }
+    }
+
+    public static void RemoveFirst<T>(this IList<T> collection, Func<T, bool> predicate)
+    {
+        if (collection is null)
+            throw new ArgumentNullException(nameof(collection));
+
+        if (predicate is null)
+            throw new ArgumentNullException(nameof(predicate));
+
+        for (int i = 0; i < collection.Count; i++)
+        {
+            if (predicate(collection[i]))
+            {
+                collection.RemoveAt(i);
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Checks if a date is between two dates.
+    /// </summary>
+    public static bool Between(this DateTime dt, DateTime rangeBeg, DateTime rangeEnd)
+    {
+        return dt.Ticks >= rangeBeg.Ticks && dt.Ticks <= rangeEnd.Ticks;
+    }
+
+    public static DateTime StartOfMonth(this DateTime dateTime)
+    {
+        return dateTime.Date.AddDays(-1 * (dateTime.Day - 1));
+    }
+
+    public static DateTime EndOfMonth(this DateTime dateTime)
+    {
+        return new DateTime(dateTime.Year, dateTime.Month, DateTime.DaysInMonth(dateTime.Year, dateTime.Month));
     }
 
     /// <summary>
@@ -465,7 +776,7 @@ public static class Utils
             throw new ArgumentNullException(nameof(blockingCollection));
 
         while (blockingCollection.Count > 0)
-            blockingCollection.TryTake(out T item);
+            blockingCollection.TryTake(out T? item);
     }
 
     /// <summary>
@@ -507,7 +818,7 @@ public static class Utils
         if (blockCollection == null)
             return list;
 
-        while (blockCollection.TryTake(out T item))
+        while (blockCollection.TryTake(out T? item))
             list.Add(item);
 
         return list;
@@ -557,6 +868,14 @@ public static class Utils
         return items.Skip(items.Count() - count);
     }
 
+    public static string GetLast(this string text, int numChars)
+    {
+        if (numChars >= text.Length)
+            return text;
+
+        return text.Substring(text.Length - numChars);
+    }
+
     /// <summary>
     /// <br>Converts run-on string of dollar values into list of <see cref="decimal"/> values.</br>
     /// <br>var prices = GetDecimalValues("PLU10.00$5.00210.00446");</br>
@@ -603,16 +922,16 @@ public static class Utils
     }
 
     /// <summary>
-		/// Parses the <paramref name="xml"/> and returns a <see cref="Dictionary{TKey, TValue}"/>
-		/// which contains the keys as the elements and the values as the content.
+    /// Parses the <paramref name="xml"/> and returns a <see cref="Dictionary{TKey, TValue}"/>
+    /// which contains the keys as the elements and the values as the content.
     /// </summary>
-		/// <example>
+	/// <example>
     /// <code>
     /// var dict = configFileXmlData.GetValuesFromXml("add");
     /// foreach (var cfg in dict) 
     ///    Console.WriteLine($"{cfg.Key} ⇨ {cfg.Value}");
-		/// </code>
-		/// </example>
+	/// </code>
+	/// </example>
     /// <exception cref="System.Exception">
     /// Thrown when one parameter is
     /// <see cref="Int32.MaxValue">MaxValue</see> and the other is
@@ -621,29 +940,29 @@ public static class Utils
     /// <see href="https://learn.microsoft.com/dotnet/api/system.int32.maxvalue"/>
     ///  to point a web page instead.
     /// </exception>
-		/// <param name="xml">The raw XML string.</param>
-		/// <param name="element">The element name to look for.</param>
-		/// <returns><see cref="Dictionary{TKey, TValue}"/></returns>
-		public static Dictionary<string, string> GetValuesFromXml(this string xml, string element = "add")
+	/// <param name="xml">The raw XML string.</param>
+	/// <param name="element">The element name to look for.</param>
+	/// <returns><see cref="Dictionary{TKey, TValue}"/></returns>
+	public static Dictionary<string, string> GetValuesFromXml(this string xml, string element = "add")
     {
         Dictionary<string, string> dict = new Dictionary<string, string>();
 
-			try
+		try
+		{
+			XElement root = XElement.Parse(xml);
+			foreach (XElement xe in root.Descendants(element))
 			{
-				XElement root = XElement.Parse(xml);
-				foreach (XElement xe in root.Descendants(element))
-				{
                 // Check for empty elements, e.g. "<add></add>"
                 if (xe.Attribute("key") != null && xe.Attribute("value") != null)
-					{
-						string key = xe.Attribute("key").Value;
-						string value = xe.Attribute("value").Value;
-						dict[key] = value;
-					}
-				}
+				{
+					    string key = xe.Attribute("key").Value;
+					    string value = xe.Attribute("value").Value;
+					    dict[key] = value;
+			    }
 			}
-			catch (Exception ex)
-			{
+		}
+		catch (Exception ex)
+		{
             Console.WriteLine($"GetValuesFromXml: {ex.Message}");
         }
 
@@ -817,6 +1136,30 @@ public static class Utils
         Console.ForegroundColor = ConsoleColor.DarkCyan;
         Console.WriteLine(msg);
         Console.ForegroundColor = tmp;
+    }
+
+    /// <summary>
+    /// Basic key/pswd generator for unique IDs.
+    /// This employs the standard MS key table which accounts
+    /// for the 36 Latin letters and Arabic numerals used in
+    /// most Western European languages...
+    /// 24 chars are favored: 2346789 BCDFGHJKMPQRTVWXY
+    /// 12 chars are avoided: 015 AEIOU LNSZ
+    /// Only 2 chars are occasionally mistaken: 8 and B (depends on the font).
+    /// The base of possible codes is large (about 3.2 * 10^34).
+    /// </summary>
+    public static string GetRandomKey(int pLength = 6)
+    {
+        const string pwChars = "2346789BCDFGHJKMPQRTVWXY";
+        if (pLength < 6)
+            pLength = 6; // minimum of 6 characters
+
+        char[] charArray = pwChars.Distinct().ToArray();
+        var result = new char[pLength];
+        for (int x = 0; x < pLength; x++)
+            result[x] = pwChars[Random.Shared.Next() % pwChars.Length];
+
+        return (new string(result));
     }
 
     /// <summary>
@@ -1731,7 +2074,7 @@ public static class Utils
     /// will return Windows 8 version, which is 6.2, instead of 6.3 and 10.0!
     /// </summary>
     /// <returns>tuple representing the OS major and minor version</returns>
-    public static (int,int) GetOSMajorAndMinor()
+    public static Version GetOSMajorAndMinor()
     {
         //OperatingSystem osVersion = Environment.OSVersion;
         OSVERSIONINFOEX osvi = new OSVERSIONINFOEX();
@@ -1746,7 +2089,7 @@ public static class Utils
             short suiteMask = osvi.wSuiteMask;
             string servicePack = osvi.szCSDVersion;
         }
-        return (osvi.dwMajorVersion, osvi.dwMinorVersion);
+        return new Version(osvi.dwMajorVersion, osvi.dwMinorVersion, osvi.dwBuildNumber);
     }
 
     [DllImport("kernel32.dll")]

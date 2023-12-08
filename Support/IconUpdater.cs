@@ -17,7 +17,7 @@ public class IconUpdater
         if (icon == null)
             return;
 
-        if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+        if (Utils.IsWindowsCompatible())
             SetWindowIcon(icon);
         else
             Debug.WriteLine($"Feature is not supported on {Environment.OSVersion.Platform} platform.");
@@ -25,7 +25,7 @@ public class IconUpdater
 
     public static void SetConsoleIconAtRuntime(string iconFilePath)
     {
-        if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+        if (Utils.IsWindowsCompatible())
         {
             if (!string.IsNullOrEmpty(iconFilePath))
             {
