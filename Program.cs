@@ -227,6 +227,12 @@ public class Program
                 TestConcurrentManager(Random.Shared.Next(10, _maxDesired * 10));
                 break;
             case 6:
+                using (var sm = new StackManager())
+                {
+                    sm.Start(2, 3, 100);
+                }
+                break;
+            case 7:
                 if (Utils.IsWindowsCompatible())
                     TestWMIC();
                 break;
@@ -290,7 +296,15 @@ public class Program
             }
             else if (_conKey == ConsoleKey.D6)
             {
-                config!.TestNumber = 5;
+                config!.TestNumber = 6;
+                using (var sm = new StackManager())
+                {
+                    sm.Start(1, 1, 20);
+                }
+            }
+            else if (_conKey == ConsoleKey.D7)
+            {
+                config!.TestNumber = 7;
                 if (Utils.IsWindowsCompatible())
                 {
                     Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
@@ -334,8 +348,9 @@ public class Program
                 }
                 #endregion
             }
-            else if (_conKey == ConsoleKey.D7)
+            else if (_conKey == ConsoleKey.D8)
             {
+                config!.TestNumber = 8;
                 Console.WriteLine($"⇒ Collecting services...");
                 var services = GetWindowsServices();
                 foreach (var serv in services)
@@ -347,8 +362,9 @@ public class Program
                     catch (KeyNotFoundException) { }
                 }
             }
-            else if (_conKey == ConsoleKey.D8)
+            else if (_conKey == ConsoleKey.D9)
             {
+                config!.TestNumber = 9;
                 Console.WriteLine($"⇒ Collecting processes...");
                 var procs = GetWindowsProcesses();
                 foreach (var proc in procs)
@@ -464,8 +480,9 @@ public class Program
         Console.WriteLine($"   3) Test ChannelManager      (Threading.Channels)");
         Console.WriteLine($"   4) Test ScheduleManager     (BlockingCollection)");
         Console.WriteLine($"   5) Test QueueManager        (ConcurrentQueue)   ");
+        Console.WriteLine($"   6) Test StackManager        (ConcurrentStack)   ");
         if (Utils.IsWindowsCompatible())
-            Console.WriteLine($"   6) Test WMIC                                    ");
+            Console.WriteLine($"   7) Test WMIC                                    ");
         Console.WriteLine($"   B) Check if agent is busy                       ");
         Console.WriteLine($"   C) Clear items                                  ");
         Console.WriteLine($"   T) Toggle agent thread                          ");
@@ -626,7 +643,6 @@ public class Program
                 itemCount--;
                 if (!item.Token.IsCancellationRequested)
                 {
-                    item.Activated = true;
                     Console.WriteLine($"Consumed: \"{item.Title}\" ID#{item.Id}.  Item Count: {itemCount}");
                     item.ToRun?.Invoke();
                 }
