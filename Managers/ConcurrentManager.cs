@@ -80,7 +80,6 @@ public class ConcurrentManager : IDisposable
                     // We could also employ a CancellationTokenRegistration ctr = item.Token.Register(() => { });
                     if (!item.Token.IsCancellationRequested)
                     {
-                        item.Activated = true;
                         if (_debug)
                         {
                             string leftSide = $"Consuming: \"{item?.Title}\" ID #{item?.Id}.";
@@ -292,6 +291,14 @@ public class ConcurrentManager : IDisposable
     {
         Shutdown(false);
     }
+
+    /// <summary>
+    /// Finalizer for safety (if the Dispose method isn't explicitly called)
+    /// </summary>
+    ~ConcurrentManager()
+    {
+        Dispose();
+    }
     #endregion
 }
 
@@ -303,7 +310,6 @@ public class QueueItem
     public int Id { get; set; }
     public string? Title { get; set; }
     public Action? ToRun { get; set; }
-    public bool Activated { get; set; } = false;
     public CancellationToken Token { get; set; }
 
     public QueueItem(int id, string? title, Action? action, CancellationToken token = default(CancellationToken))

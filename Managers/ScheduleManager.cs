@@ -457,6 +457,14 @@ public class ScheduleManager : IDisposable
     }
 
     /// <summary>
+    /// Finalizer for safety (if the Dispose method isn't explicitly called)
+    /// </summary>
+    ~ScheduleManager()
+    {
+        Dispose();
+    }
+
+    /// <summary>
     /// Informs the <see cref="BlockingCollection{T}"/> that we are done with additions.
     /// WARNING: Do not use this method if you plan to re-use the Scheduler in your implementation!
     /// </summary>
