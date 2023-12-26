@@ -2,12 +2,16 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
+using System.IO;
+using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization.Json;
 using System.Runtime.Versioning;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Channels;
+using Microsoft.VisualBasic;
 
 namespace ProducerConsumer;
 
@@ -65,25 +69,6 @@ public class Program
     public static string Title { get; set; } = AppDomain.CurrentDomain.FriendlyName.Replace(".exe", "").SeparateCamelCase();
     #endregion
 
-    /// <summary>
-    /// Domain exception handler.
-    /// </summary>
-    static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
-    {
-        Console.CursorVisible = true;
-        Console.WriteLine("!!! Caught unhandled exception event on " + DateTime.Now.ToLongDateString() + " at " + DateTime.Now.ToLongTimeString() + " !!!");
-        var ex = e.ExceptionObject as Exception;
-        if (ex != null)
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine(FormatException(ex));
-            Console.ForegroundColor = ConsoleColor.Gray;
-        }
-        // In the event that we're launched from a shortcut,
-        // allow enough pause for the user to see the error.
-        Thread.Sleep(5000);
-    }
-
     static void Main(string[] args)
     {
         #region [Initialization and Extras]
@@ -91,29 +76,56 @@ public class Program
         AppDomain.CurrentDomain.UnhandledException += new System.UnhandledExceptionEventHandler(CurrentDomain_UnhandledException);
         Console.OutputEncoding = Encoding.UTF8;
 
-        #region [Get console window sizes]
+        #region [Set console window font and location]
         _conHwnd = ConsoleHelper.GetForegroundWindow();
         var winSize = ConsoleHelper.GetWindowSize(_conHwnd);
         var buffSize = ConsoleHelper.GetConsoleSize();
-        Console.WriteLine($"⇒ WindowSize:{winSize.width},{winSize.height} ─ BufferSize:{buffSize.width},{buffSize.height}");
-        //ConsoleHelper.SetWindowPosition(conHwnd, 1, 1, winSize.width, winSize.width);
+        //Log.Instance.WriteToConsole($"⇒ WindowSize:{winSize.width},{winSize.height} ─ BufferSize:{buffSize.width},{buffSize.height}", LogLevel.Debug);
         #endregion
 
         #region [Load the app settings]
-        var config = _settings.GetSettings("Settings.cfg");
+        var config = _settings.GetSettings("Settings.json");
         // Do we have any settings?
         if (config != null)
         {
-            // Show current settings using Reflection.
-            //foreach (var val in settings.ListSettings()) { Console.WriteLine($"⇒ \"{val}\""); }
+            #region [Show current settings using Reflection]
+            //foreach (var val in _settings.ListSettings())
+            //{ 
+            //    if (val != null && val.GetType() == typeof(Settings))
+            //    {
+            //        var s = val as Settings;
+            //        Console.WriteLine($"FontName ⇒ \"{s?.FontName}\"");
+            //        Console.WriteLine($"FontSize ⇒ \"{s?.FontSize}\"");
+            //        Console.WriteLine($"TestNumber ⇒ \"{s?.TestNumber}\"");
+            //    }
+            //}
+            #endregion
 
             try
-            {   // It's best to do this after initializing the Window Sizes and Buffers.
+            {
+                // Configure our custom font.
+                var fontLocation = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Fonts", "3270-Regular.ttf");
+                ConsoleHelper.InstallFont(fontLocation);
+                // NOTE: Setting the font may change the size of the console window.
+                // To account for this you could move the GetWindowSize call AFTER the SetCurrentFont call.
                 ConsoleHelper.SetCurrentFont(config.FontName, Convert.ToInt16(config.FontSize));
+
+                // Attempt to center the console window.
+                var dims = ConsoleHelper.GetScreenDimensions();
+                if (dims.width > 0 && dims.height > 0)
+                {
+                    var x = (dims.width - (winSize.width + 10)) / 2;
+                    var y = (dims.height - (winSize.height + 10)) / 2;
+                    ConsoleHelper.SetWindowPosition(_conHwnd, x, y, winSize.width, winSize.height);
+                }
+                else
+                {
+                    ConsoleHelper.SetWindowPosition(_conHwnd, 1, 1, winSize.width, winSize.height);
+                }
             }
             catch (System.ComponentModel.Win32Exception ex)
             {
-                Console.WriteLine($"⇒ SetCurrentFont {ex.Message}");
+                Log.Instance.WriteConsole($"⇒ SetCurrentFont {ex.Message}", LogLevel.Error);
             }
         }
         #endregion
@@ -121,10 +133,10 @@ public class Program
         // Show the current runtime info.
         Assembly assembly = typeof(Program).Assembly;
         var frameAttr = (TargetFrameworkAttribute)assembly.GetCustomAttributes(typeof(TargetFrameworkAttribute), false)[0];
-        Console.WriteLine(string.Format("⇒ {0} ─ User \"{1}\"", string.IsNullOrEmpty(frameAttr.FrameworkDisplayName) ? frameAttr.FrameworkName : frameAttr.FrameworkDisplayName, Environment.UserName));
-        Console.WriteLine($"⇒ Windows version {Environment.OSVersion.Version} is being reported from the environment.");
-        Console.WriteLine($"⇒ Runtime is here \"{RuntimeEnvironment.GetRuntimeDirectory()}\"");
-        Console.WriteLine($"⇒ Current process is \"{Process.GetCurrentProcess().MainModule?.FileName}\"");
+        Log.Instance.WriteConsole(string.Format("⇒ {0} ─ User \"{1}\"", string.IsNullOrEmpty(frameAttr.FrameworkDisplayName) ? frameAttr.FrameworkName : frameAttr.FrameworkDisplayName, Environment.UserName), LogLevel.Info);
+        Log.Instance.WriteConsole($"⇒ Windows version {Environment.OSVersion.Version} is being reported from the environment.", LogLevel.Info);
+        Log.Instance.WriteConsole($"⇒ Runtime is here \"{RuntimeEnvironment.GetRuntimeDirectory()}\"", LogLevel.Info);
+        Log.Instance.WriteConsole($"⇒ Current process is \"{Process.GetCurrentProcess().MainModule?.FileName}\"", LogLevel.Info);
         //_winVersion = Utils.GetOSMajorAndMinor();
         if (Utils.IsWindowsCompatible())
         {   // Configure embedded resources.
@@ -135,31 +147,32 @@ public class Program
         }
         #endregion
 
+        CheckMaximumThreads();
         DumpAllEmbeddedResources();
-
-        ShowLogo(leftPad: 1, addPause: true);
+        ShowLogo(leftPad: 1, addPause: false);
 
         //var result = await TaskTimer.Start(async () => { await RunThreadTest(); });
         //Console.WriteLine($"Task took {result.Duration.TotalSeconds} seconds (no return value)");
 
         #region [Setup the ChannelManager's delegates]
         _chanman.OnBeginInvoke += (item, msg) => { $"••BEGIN••••• {msg}".Announcement(); /* var ci = item as ChannelItem; */ };
-        _chanman.OnEndInvoke += (item, msg) =>   { $"••END••••••• {msg}".Announcement(); };
-        _chanman.OnCancel += (item, msg) =>      { $"••CANCEL•••• {msg}".Announcement(); };
-        _chanman.OnError += (item, msg) =>       { $"••ERROR••••• {msg}".Announcement(); };
-        _chanman.OnWarning += (item, msg) =>     { $"••WARNING••• {msg}".Announcement(); };
-        _chanman.OnShutdown += (msg) =>                { $"••SHUTDOWN•• {msg}".Announcement(); };
+        _chanman.OnEndInvoke += (item, msg) => { $"••END••••••• {msg}".Announcement(); };
+        _chanman.OnCancel += (item, msg) => { $"••CANCEL•••• {msg}".Announcement(); };
+        _chanman.OnError += (item, msg) => { $"••ERROR••••• {msg}".Announcement(); };
+        _chanman.OnWarning += (item, msg) => { $"••WARNING••• {msg}".Announcement(); };
+        _chanman.OnShutdown += (msg) => { $"••SHUTDOWN•• {msg}".Announcement(); };
         _chanman.ChangeResolution(1000);
         #endregion
 
         #region [Setup the ConcurrentlManager's delegates]
         _queueman.OnBeginInvoke += (item, msg) => { $"••BEGIN••••• {msg}".Announcement(); /* var ci = item as QueueItem; */ };
-        _queueman.OnEndInvoke += (item, msg) =>   { $"••END••••••• {msg}".Announcement(); };
-        _queueman.OnCancel += (item, msg) =>      { $"••CANCEL•••• {msg}".Announcement(); };
-        _queueman.OnError += (item, msg) =>       { $"••ERROR••••• {msg}".Announcement(); };
-        _queueman.OnWarning += (item, msg) =>     { $"••WARNING••• {msg}".Announcement(); };
-        _queueman.OnShutdown += (msg) =>                { $"••SHUTDOWN•• {msg}".Announcement(); };
-        _queueman.OnExhausted += (msg) =>               { 
+        _queueman.OnEndInvoke += (item, msg) => { $"••END••••••• {msg}".Announcement(); };
+        _queueman.OnCancel += (item, msg) => { $"••CANCEL•••• {msg}".Announcement(); };
+        _queueman.OnError += (item, msg) => { $"••ERROR••••• {msg}".Announcement(); };
+        _queueman.OnWarning += (item, msg) => { $"••WARNING••• {msg}".Announcement(); };
+        _queueman.OnShutdown += (msg) => { $"••SHUTDOWN•• {msg}".Announcement(); };
+        _queueman.OnExhausted += (msg) =>
+        {
             $"••EXHAUSTED•• {msg}".Announcement();
             TestConcurrentManager(Random.Shared.Next(10, _maxDesired * 10));
         };
@@ -167,12 +180,14 @@ public class Program
         #endregion
 
         #region [Setup the ScheduleManager's delegates]
-        _schedman.OnInvoke += (item, msg) =>  { $"••INVOKE•••• {msg}".Announcement(); /* var ai = item as ActionItem; */ };
-        _schedman.OnCancel += (item, msg) =>  { $"••CANCEL•••• {msg}".Announcement(); };
-        _schedman.OnError += (item, msg) =>   { $"••ERROR••••• {msg}".Announcement(); };
+        _schedman.OnInvoke += (item, msg) => { $"••INVOKE•••• {msg}".Announcement(); /* var ai = item as ActionItem; */ };
+        _schedman.OnCancel += (item, msg) => { $"••CANCEL•••• {msg}".Announcement(); };
+        _schedman.OnError += (item, msg) => { $"••ERROR••••• {msg}".Announcement(); };
         _schedman.OnWarning += (item, msg) => { $"••WARNING••• {msg}".Announcement(); };
-        _schedman.OnShutdown += (msg) =>            { $"••SHUTDOWN•• {msg}".Announcement(); };
-        _schedman.OnExhausted += (msg) =>           { $"••EXHAUSTED•• {msg}".Announcement();
+        _schedman.OnShutdown += (msg) => { $"••SHUTDOWN•• {msg}".Announcement(); };
+        _schedman.OnExhausted += (msg) =>
+        {
+            $"••EXHAUSTED•• {msg}".Announcement();
             if (!_clearFlag)
             {
                 #region [Test reusing the Scheduler]
@@ -194,7 +209,7 @@ public class Program
                             var vsw = ValueStopwatch.StartNew();
                             Console.WriteLine($"{title} #{trapped} scheduled for {runTime.ToLongTimeString()} started");
                             Thread.Sleep(Random.Shared.Next(100, 3001));
-                            Console.WriteLine($"{title} #{trapped} ran for {vsw.GetElapsedTime().GetReadableTime()}");
+                            Console.WriteLine($"{title} #{trapped} ran for {vsw.GetElapsedTime().ToReadableString()}");
                         },
                         DateTime.Now.AddSeconds(secDelay), // Set some time in the future to run.
                         aiCts.Token)
@@ -204,6 +219,13 @@ public class Program
                 _currentIndex += _maxDesired;
                 #endregion
             }
+        };
+        #endregion
+
+        #region [Setup the ThreadPool delegate]
+        OnUserWorkItemComplete += (obj, msg) => 
+        { 
+            Log.Instance.WriteConsole($"{msg} ({(obj != null ? obj : "null")})", LogLevel.Event); 
         };
         #endregion
 
@@ -245,28 +267,48 @@ public class Program
         #region [Monitor user keypress]
         while ((_conKey = Console.ReadKey(true).Key) != ConsoleKey.Escape)
         {
-            Console.WriteLine($"⇒ \"{_conKey}\" keypress detected.");
+            Log.Instance.WriteConsole($"⇒ \"{_conKey}\" keypress detected.", LogLevel.Info);
             if (_conKey == ConsoleKey.D1)
             {
+                // Signal the taskbar that we're working.
+                TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.Indeterminate);
+
                 config!.TestNumber = 1;
-                Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
+                Log.Instance.WriteConsole($"⇒ Test #{config.TestNumber} selected.", LogLevel.Info);
                 TestSequentialThreadingChannel();
+
+                // Signal the taskbar that we're done.
+                TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.NoProgress);
             }
             else if (_conKey == ConsoleKey.D2)
             {
                 config!.TestNumber = 2;
-                Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
+                Log.Instance.WriteConsole($"⇒ Test #{config.TestNumber} selected.", LogLevel.Info);
                 //Task.Run(async () => await TestParallelThreadingChannel()).GetAwaiter().GetResult();
-                var rez = TaskTimer.Start(async () => { await TestParallelThreadingChannel(); }).GetAwaiter().GetResult();
-                Console.WriteLine($"⇒ Waited {rez.Duration.GetReadableTime()}");
+                var rez = TaskTimer.Start(async () => 
+                {
+                    // Signal the taskbar that we're working.
+                    TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.Indeterminate);
+
+                    await TestParallelThreadingChannel();
+
+                    // Signal the taskbar that we're done.
+                    TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.NoProgress);
+
+                }).GetAwaiter().GetResult();
+
+                Log.Instance.WriteConsole($"⇒ Waited {rez.Duration.ToReadableString()}", LogLevel.Info);
             }
             else if (_conKey == ConsoleKey.D3)
             {
                 config!.TestNumber = 3;
-                Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
-                //Console.WriteLine($"⇒ Press 'A' to add {nameof(ChannelItem)}s.");
+                Log.Instance.WriteConsole($"⇒ Test #{config.TestNumber} selected.", LogLevel.Info);
+                //Log.Instance.WriteToConsole($"⇒ Press 'A' to add {nameof(ChannelItem)}s.", LogLevel.Info);
                 if (_adder == null)
                 {
+                    // Signal the taskbar that we're working.
+                    TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.Indeterminate);
+
                     _adder = new Thread(AddingLoop)
                     {
                         IsBackground = true,
@@ -284,30 +326,45 @@ public class Program
             }
             else if (_conKey == ConsoleKey.D4)
             {
+                // Signal the taskbar that we're working.
+                TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.Indeterminate);
+
                 config!.TestNumber = 4;
-                Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
+                Log.Instance.WriteConsole($"⇒ Test #{config.TestNumber} selected.", LogLevel.Info);
                 TestScheduleManager();
             }
             else if (_conKey == ConsoleKey.D5)
             {
+                // Signal the taskbar that we're working.
+                TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.Indeterminate);
+
                 config!.TestNumber = 5;
-                Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
+                Log.Instance.WriteConsole($"⇒ Test #{config.TestNumber} selected.", LogLevel.Info);
                 TestConcurrentManager(Random.Shared.Next(10, _maxDesired * 10));
             }
             else if (_conKey == ConsoleKey.D6)
             {
+                // Signal the taskbar that we're working.
+                TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.Indeterminate);
+
                 config!.TestNumber = 6;
                 using (var sm = new StackManager())
                 {
                     sm.Start(1, 1, 20);
                 }
+
+                // Signal the taskbar that we're done.
+                TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.NoProgress);
             }
             else if (_conKey == ConsoleKey.D7)
             {
                 config!.TestNumber = 7;
                 if (Utils.IsWindowsCompatible())
                 {
-                    Console.WriteLine($"⇒ Test #{config.TestNumber} selected.");
+                    // Signal the taskbar that we're working.
+                    TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.Indeterminate);
+
+                    Log.Instance.WriteConsole($"⇒ Test #{config.TestNumber} selected.", LogLevel.Info);
                     #region [Gathering system data from cmdline]
                     var lines = CallWMIC();
                     if (lines.Count > 1)
@@ -341,60 +398,203 @@ public class Program
                     }
                     Console.ForegroundColor = ConsoleColor.Gray;
                     Console.WriteLine();
+
+                    // Signal the taskbar that we're done.
+                    TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.NoProgress);
                 }
                 else
                 {
-                    Console.WriteLine($"⇒ Test #{config.TestNumber} is only available on Windows.");
+                    Log.Instance.WriteConsole($"⇒ Test #{config.TestNumber} is only available on Windows.", LogLevel.Warning);
                 }
                 #endregion
             }
             else if (_conKey == ConsoleKey.D8)
             {
                 config!.TestNumber = 8;
-                Console.WriteLine($"⇒ Collecting services...");
-                var services = GetWindowsServices();
-                foreach (var serv in services)
+
+                if (Utils.IsWindowsCompatible())
                 {
-                    try
+                    // Signal the taskbar that we're working.
+                    TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.Indeterminate);
+
+                    Log.Instance.WriteConsole($"⇒ Collecting services...", LogLevel.Info);
+                    var services = GetWindowsServices();
+                    foreach (var serv in services)
                     {
-                        Console.WriteLine(string.Format("{0,-71}{1,-20}{2,-20}", serv["Caption"], serv["State"], serv["StartMode"]));
+                        try
+                        {
+                            Log.Instance.WriteConsole(string.Format("{0,-71}{1,-20}{2,-20}", serv["Caption"], serv["State"], serv["StartMode"]), LogLevel.Info);
+                        }
+                        catch (KeyNotFoundException) { }
                     }
-                    catch (KeyNotFoundException) { }
+
+                    // Signal the taskbar that we're done.
+                    TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.NoProgress);
                 }
             }
             else if (_conKey == ConsoleKey.D9)
             {
                 config!.TestNumber = 9;
-                Console.WriteLine($"⇒ Collecting processes...");
-                var procs = GetWindowsProcesses();
-                foreach (var proc in procs)
+
+                if (Utils.IsWindowsCompatible())
                 {
-                    try
+                    // Signal the taskbar that we're working.
+                    TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.Indeterminate);
+
+                    Log.Instance.WriteConsole($"⇒ Collecting shares...", LogLevel.Debug);
+                    var shares = GetWindowsShares();
+                    foreach (var share in shares)
                     {
-                        Console.WriteLine(string.Format("{0,-60}{1,-30}{2,-10}", proc["Description"], WMICOffsetConversion(proc["CreationDate"]), proc["ProcessId"]));
+                        try
+                        {
+                            Log.Instance.WriteConsole(string.Format("{0,-40}{1,-20}{2,-30}{3,-10}", share["Description"], share["Name"], share["Path"], share["Status"]), LogLevel.Info);
+                        }
+                        catch (KeyNotFoundException) { }
                     }
-                    catch (KeyNotFoundException) { }
+                    Console.WriteLine();
+
+                    //Log.Instance.WriteToConsole($"⇒ Collecting processes...", LogLevel.Debug);
+                    //var procs = GetWindowsProcesses();
+                    //foreach (var proc in procs)
+                    //{
+                    //    try
+                    //    {
+                    //        Log.Instance.WriteToConsole(string.Format("{0,-60}{1,-30}{2,-10}", proc["Description"], WMICOffsetConversion(proc["CreationDate"]), proc["ProcessId"]), LogLevel.Info);
+                    //    }
+                    //    catch (KeyNotFoundException) { }
+                    //} Console.WriteLine();
+
+                    Log.Instance.WriteConsole($"⇒ Collecting printers...", LogLevel.Debug);
+                    var printers = GetWindowsPrinters();
+                    foreach (var p in printers)
+                    {
+                        try
+                        {
+                            Log.Instance.WriteConsole(string.Format("{0,-40}default={1,-10} local={2,-10} port={3,-30}", p["Caption"], p["Default"], p["Local"], p["PortName"]), LogLevel.Info);
+                        }
+                        catch (KeyNotFoundException) { }
+                    }
+                    Console.WriteLine();
+
+
+                    Log.Instance.WriteConsole($"⇒ Collecting alternate file streams...", LogLevel.Debug);
+
+                    var dlist = Log.Instance.GetAllDrives();
+                    var path = Utils.NavigateUpFolders(Directory.GetCurrentDirectory(), 3);
+                    var rez = RunPowerShellCommand(path, "Get-ChildItem -Recurse | Get-Item -Stream Zone.Identifier -ErrorAction SilentlyContinue | Select-Object FileName");
+                    foreach (var line in rez)
+                    {
+                        Log.Instance.WriteConsole($"{line}", LogLevel.Info);
+                    }
+                    Log.Instance.WriteConsole($"⇒ Collection finished.", LogLevel.Debug);
+
+                    // Signal the taskbar that we're done.
+                    TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.NoProgress);
                 }
+            }
+            else if (_conKey == ConsoleKey.D0) 
+            {
+                // Signal the taskbar that we're working.
+                TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.Indeterminate);
+
+                var serial = new SerialEmulator();
+
+                //TestThreadPoolQueue(Random.Shared.Next(5,30));
+                //TestThreadPoolWaitRegister();
+
+                //var rwom = new RegisterWaitObjectManager();
+                //rwom.TestThreadPoolWaitRegisterWithARE();
+
+                #region [Using a basic trigger]
+                //using (var rwom = new RegisterWaitObjectManager(100))
+                //{
+                //    rwom.TestThreadPoolWaitRegister(TimeSpan.FromSeconds(30));
+                //    while (rwom.AreAnyWaitObjectsNotTriggered())
+                //    {
+                //        // Small delay before attempting a trigger.
+                //        Thread.Sleep(Random.Shared.Next(100, 501));
+                //        rwom.TriggerWaitObject(Random.Shared.Next(0, rwom.GetWaitObjectCount()));
+                //    }
+                //    Log.Instance.WriteConsole($"⇒ No more {nameof(TriggerObject)}s remaining.", LogLevel.Info);
+                //}
+                #endregion
+
+                #region [Using an advanced trigger]
+                List<Action> actions = new();
+                for (int t = 0; t < 10; t++) 
+                {
+                    actions.Add(new Action(() => {
+                        Log.Instance.WriteConsole($"I'm an action on tid {Thread.CurrentThread.ManagedThreadId}.", LogLevel.Debug);
+                        if (serial.Connect())
+                        {
+                            Log.Instance.WriteConsole($"I was able to connect to the serial device \"{serial.Device}\".", LogLevel.Success);
+                            serial.SendData(Utils.GetRandomName());
+                        }
+                        else
+                        {
+                            Log.Instance.WriteConsole($"I was unable to connect to the serial device \"{serial.Device}\".", LogLevel.Warning);
+                        }
+                        Thread.Sleep(Random.Shared.Next(1000, 10000));
+                    }));
+                }
+                var maxTimeToWait = TimeSpan.FromSeconds(2);
+                using (var rwom = new RegisterWaitObjectManager()) 
+                {
+                    bool running = true;
+                    rwom.OnTimedOut += (msg) => 
+                    {
+                        Log.Instance.WriteConsole($"{msg}", LogLevel.Error);
+                        running = false;
+                    };
+                    rwom.TestThreadPoolWaitRegister(maxTimeToWait, actions, true);
+                    
+                    // We could fire all objects at once...
+                    //rwom.TriggeredAllWaitObjects();
+
+                    // Or, fire each object inside a loop until complete.
+                    while (rwom.AreAnyWaitObjectsNotTriggered() && running) 
+                    {
+                        Thread.Sleep(250);
+                        
+                        // Try and guess the next one (not very practical)...
+                        //rwom.TriggerWaitObject(Random.Shared.Next(0, rwom.GetWaitObjectCount()));
+
+                        // Or, find the next available and trigger it.
+                        var to = rwom.GetNextUntriggeredWaitObject();
+                        if (to != null) { rwom.TriggerWaitObject(to.Id); }
+                    }
+
+                    Log.Instance.WriteConsole($"⇒ No more {nameof(TriggerObject)}s remaining.", LogLevel.Info);
+                    Thread.Sleep(2000);
+                    
+                    //Log.Instance.WriteConsole($"⇒ Resetting all {nameof(TriggerObject)}s.", LogLevel.Info);
+                    //rwom.ResetAllWaitObjects();
+                    //Log.Instance.WriteConsole($"⇒ Running {nameof(TriggerObject)} again.", LogLevel.Info);
+                    //var tobj = rwom.GetNextUntriggeredWaitObject();
+                    //if (tobj != null) { rwom.TriggerWaitObject(tobj.Id); }
+                    //Thread.Sleep(2000);
+                }
+                #endregion
+
+                // Signal the taskbar that we're working.
+                TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.NoProgress);
             }
             else if (_conKey == ConsoleKey.C)
             {
                 if (config?.TestNumber == 3)
                 {
-                    Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\r\n⇒ Clearing {_chanman.GetItemCount()} from the Channel.");
+                    Log.Instance.WriteConsole($"⇒ Clearing {_chanman.GetItemCount()} from the Channel.", LogLevel.Info);
                     _chanman.ClearItems();
                 }
                 else if (config?.TestNumber == 4)
                 {
-                    Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\r\n⇒ Clearing {_schedman.GetInactivatedCount()} items from the scheduler!");
+                    Log.Instance.WriteConsole($"⇒ Clearing {_schedman.GetInactivatedCount()} items from the scheduler!", LogLevel.Info);
                     _schedman.ClearSchedule();
                     _clearFlag = true;
                 }
                 else if (config?.TestNumber == 5)
                 {
-                    Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\r\n⇒ Clearing {_queueman.GetItemCount()} from the Queue.");
+                    Log.Instance.WriteConsole($"⇒ Clearing {_queueman.GetItemCount()} from the Queue.", LogLevel.Info);
                     _queueman.ClearItems();
                 }
             }
@@ -402,13 +602,11 @@ public class Program
             {
                 if (config?.TestNumber == 3)
                 {
-                    Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\r\nIsBusy? ⇒ {_chanman.IsBusy()}");
+                    Log.Instance.WriteConsole($"IsBusy? ⇒ {_chanman.IsBusy()}", LogLevel.Info);
                 }
                 else if (config?.TestNumber == 4)
                 {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"\r\n⇒ Still waiting to be activated: {_schedman.GetInactivatedCount()}");
+                    Log.Instance.WriteConsole($"⇒ Still waiting to be activated: {_schedman.GetInactivatedCount()}", LogLevel.Info);
                 }
             }
             else if (_conKey == ConsoleKey.T)
@@ -417,50 +615,65 @@ public class Program
                 {
                     // This will not stop execution of the items if we're already inside the while loop.
                     _chanman.Toggle();
-                    Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\r\nIs Channel Thread Suspended? ⇒ {_chanman.IsThreadSuspended()}");
+                    Log.Instance.WriteConsole($"Is Channel Thread Suspended? ⇒ {_chanman.IsThreadSuspended()}", LogLevel.Info);
                 }
-                else if (config?.TestNumber == 4) 
+                else if (config?.TestNumber == 4)
                 {
                     // This will not stop execution of the items if we're already inside the while loop.
                     _schedman.Toggle();
-                    Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\r\nIs Scheduler Thread Suspended? ⇒ {_schedman.IsThreadSuspended()}");
+                    Log.Instance.WriteConsole($"Is Scheduler Thread Suspended? ⇒ {_schedman.IsThreadSuspended()}", LogLevel.Info);
                 }
             }
             else
             {
                 ShowMenu();
             }
-         }
+        }
         #endregion
 
         #region [Cleanup]
         Console.ForegroundColor = ConsoleColor.White;
         if (config?.TestNumber == 3)
         {
-            Console.WriteLine($"\r\n⇒ {_chanman.GetItemCount()} items remain in the manager. ");
+            Console.WriteLine($"⇒ {_chanman.GetItemCount()} items remain in the manager. ");
         }
         else if (config?.TestNumber == 4)
         {
-            Console.WriteLine($"\r\n⇒ {_schedman.GetInactivatedCount()} items remain in the scheduler. ");
+            Console.WriteLine($"⇒ {_schedman.GetInactivatedCount()} items remain in the scheduler. ");
         }
         else if (config?.TestNumber == 5)
         {
-            Console.WriteLine($"\r\n⇒ {_queueman.GetItemCount()} items remain in the queue. ");
+            Console.WriteLine($"⇒ {_queueman.GetItemCount()} items remain in the queue. ");
         }
-        
+
         // Inform the agents to close shop.
         _schedman.Dispose();
         _queueman.Dispose();
         _chanman.Dispose();
-        
+
         // Signal any local thread loops.
         _shutdown = true;
+
+        // Signal the taskbar that we're done.
+        TaskbarProgress.SetState(_conHwnd, TaskbarProgress.TaskbarStates.NoProgress);
         #endregion
 
-        Console.WriteLine("\r\n⇒ Closing... ");
+        Log.Instance.WriteConsole("⇒ Closing... ", LogLevel.Info);
         Thread.Sleep(1800);
+    }
+
+    static void SomeCallbackMethod(object? data, bool timedOut)
+    {
+        if (!timedOut)
+        {
+            Log.Instance.WriteConsole($"Started: {data}", LogLevel.Info);
+            Thread.Sleep(Random.Shared.Next(10, 5001));
+            Log.Instance.WriteConsole($"Ended: {data}", LogLevel.Success);
+        }
+        else
+        {
+            Log.Instance.WriteConsole($"TimedOut: {data}", LogLevel.Warning);
+        }
     }
 
     /// <summary>
@@ -473,7 +686,6 @@ public class Program
         Console.WriteLine();
         Console.WriteLine($"───────────────────────────────────────────────────");
         Console.WriteLine(string.Format(" {0,-30}{1,20}", leftSide, rightSide));
-
         Console.WriteLine($"───────────────────────────────────────────────────");
         Console.WriteLine($"   1) Test SequentialThreading (Threading.Channels)");
         Console.WriteLine($"   2) Test ParallelThreading   (Threading.Channels)");
@@ -510,9 +722,9 @@ public class Program
                     Thread.Sleep(Random.Shared.Next(50, 601));
             }, ciCts.Token));
         }
-        Console.WriteLine($"⇒ Writing {maxItems} items to the Channel...");
+        Log.Instance.WriteConsole($"⇒ Writing {maxItems} items to the Channel...", LogLevel.Info);
         _chanman.AddItems(list);
-        Console.WriteLine($"\r\n⇒ Generation took {vsw.GetElapsedTime().GetReadableTime()}");
+        Log.Instance.WriteConsole($"⇒ Generation took {vsw.GetElapsedTime().ToReadableString()}", LogLevel.Info);
     }
 
     /// <summary>
@@ -533,7 +745,7 @@ public class Program
                     Thread.Sleep(Random.Shared.Next(50, 601));
             }, ciCts.Token), ciCts.Token);
         }
-        Console.WriteLine($"\r\n⇒ AddItemValueTask process took {vsw.GetElapsedTime().GetReadableTime()}");
+        Log.Instance.WriteConsole($"⇒ AddItemValueTask process took {vsw.GetElapsedTime().ToReadableString()}", LogLevel.Success);
     }
 
     /// <summary>
@@ -554,7 +766,7 @@ public class Program
                     Thread.Sleep(Random.Shared.Next(50, 601));
             }, ciCts.Token), ciCts.Token);
         }
-        Console.WriteLine($"\r\n⇒ WaitToWriteAsync process took {vsw.GetElapsedTime().GetReadableTime()}");
+        Log.Instance.WriteConsole($"⇒ WaitToWriteAsync process took {vsw.GetElapsedTime().ToReadableString()}", LogLevel.Success);
     }
 
     /// <summary>
@@ -574,7 +786,7 @@ public class Program
             else
             {
                 Console.ForegroundColor = ConsoleColor.DarkYellow;
-                Console.WriteLine($"⇒ Still working on existing items, please wait.");
+                Log.Instance.WriteConsole($"⇒ Still working on existing items, please wait.", LogLevel.Info);
                 Console.ForegroundColor = ConsoleColor.Gray;
                 switch (current)
                 {
@@ -614,7 +826,7 @@ public class Program
         Channel<ChannelItem>? items = Channel.CreateUnbounded<ChannelItem>();
 
         #region [Write]
-        Console.WriteLine($"\r\n⇒ Attempting to write all to the Channel...");
+        Log.Instance.WriteConsole($"⇒ Attempting to write all to the Channel...", LogLevel.Info);
         for (int i = 0; i < max; i++)
         {
             var ci = new ChannelItem(
@@ -627,7 +839,7 @@ public class Program
                 ciCts.Token);
             items?.Writer.TryWrite(ci);
             itemCount++;
-            Console.WriteLine($"Produced: \"{ci.Title}\" ID#{ci.Id}.  Item Count: {itemCount}");
+            Log.Instance.WriteConsole($"Produced: \"{ci.Title}\" ID#{ci.Id}.  Item Count: {itemCount}", LogLevel.Info);
             Thread.Sleep(20);
         }
         // This step is only for parallel threads.
@@ -635,7 +847,7 @@ public class Program
         #endregion
 
         #region [Read]
-        Console.WriteLine($"\r\n⇒ Attempting to read all from the Channel...");
+        Log.Instance.WriteConsole($"⇒ Attempting to read all from the Channel...", LogLevel.Info);
         while (items?.Reader.Count > 0)
         {
             if (items.Reader.TryRead(out ChannelItem? item))
@@ -643,23 +855,23 @@ public class Program
                 itemCount--;
                 if (!item.Token.IsCancellationRequested)
                 {
-                    Console.WriteLine($"Consumed: \"{item.Title}\" ID#{item.Id}.  Item Count: {itemCount}");
+                    Log.Instance.WriteConsole($"Consumed: \"{item.Title}\" ID#{item.Id}.  Item Count: {itemCount}", LogLevel.Info);
                     item.ToRun?.Invoke();
                 }
                 else
                 {
-                    Console.WriteLine($"Skipping \"{item.Title}\" ID#{item.Id}, since token has expired.  Item Count: {itemCount}");
+                    Log.Instance.WriteConsole($"Skipping \"{item.Title}\" ID#{item.Id}, since token has expired.  Item Count: {itemCount}", LogLevel.Info);
                 }
             }
             else
             {
-                Console.WriteLine($"[WARNING]: Could not read from the Channel.");
+                Log.Instance.WriteConsole($"Could not read from the Channel.", LogLevel.Warning);
                 Thread.Sleep(100); // wait a little before retry
             }
         }
         #endregion
 
-        Console.WriteLine($"⇒ Sequential Channel Test Complete.");
+        Log.Instance.WriteConsole($"⇒ Sequential Channel Test Complete.", LogLevel.Success);
     }
 
     /// <summary>
@@ -674,7 +886,7 @@ public class Program
         #region [Write]
         var producer = Task.Run(async () =>
         {
-            Console.WriteLine($"\r\n⇒ Attempting to write all to the channel.");
+            Log.Instance.WriteConsole($"⇒ Attempting to write all to the channel.", LogLevel.Debug);
             for (int i = 0; i < max; i++)
             {
                 var ci = new ChannelItem(
@@ -687,7 +899,7 @@ public class Program
                     ciCts.Token);
                 await items.Writer.WriteAsync(ci);
                 itemCount++;
-                Console.WriteLine($"Produced: {ci.Title}, Item Count: {itemCount}");
+                Log.Instance.WriteConsole($"Produced: {ci.Title}, Item Count: {itemCount}", LogLevel.Info);
                 await Task.Delay(20);
             }
             // Signal any waiting threads.
@@ -698,11 +910,11 @@ public class Program
         #region [Read]
         var consumer = Task.Run(async () =>
         {
-            Console.WriteLine($"\r\n⇒ Attempting to read all from the channel.");
+            Log.Instance.WriteConsole($"⇒ Attempting to read all from the channel.", LogLevel.Debug);
             await foreach (var item in items.Reader.ReadAllAsync())
             {
                 itemCount--;
-                Console.WriteLine($"Consumed: \"{item.Title}\", Item Count: {itemCount}");
+                Log.Instance.WriteConsole($"Consumed: \"{item.Title}\", Item Count: {itemCount}", LogLevel.Info);
                 item.ToRun?.Invoke();
             }
         });
@@ -710,7 +922,7 @@ public class Program
 
         await Task.WhenAll(producer, consumer);
 
-        Console.WriteLine($"⇒ Parallel Channel Test Complete.");
+        Log.Instance.WriteConsole($"⇒ Parallel Channel Test Complete.", LogLevel.Success);
     }
 
     /// <summary>
@@ -759,9 +971,9 @@ public class Program
                 delegate ()
                 {
                     var vsw = ValueStopwatch.StartNew();
-                    Console.WriteLine($"{title} #{trapped} scheduled for {runTime.ToLongTimeString()} started");
+                    Log.Instance.WriteConsole($"{title} #{trapped} scheduled for {runTime.ToLongTimeString()} started", LogLevel.Info);
                     Thread.Sleep(Random.Shared.Next(100, 3001));
-                    Console.WriteLine($"{title} #{trapped} ran for {vsw.GetElapsedTime().GetReadableTime()}");
+                    Log.Instance.WriteConsole($"{title} #{trapped} ran for {vsw.GetElapsedTime().ToReadableString()}", LogLevel.Info);
                 },
                 DateTime.Now.AddSeconds(secDelay), // Set some time in the future to run.
                 aiCts.Token)
@@ -773,6 +985,17 @@ public class Program
     }
 
     #region [Superfluous]
+    /// <summary>
+    /// Checks the managed thread pool. Mostly targeted at <see cref="Task.Run(Action)"/> calls.
+    /// </summary>
+    static void CheckMaximumThreads()
+    {
+        int workerThreads, completionPortThreads;
+        ThreadPool.GetMaxThreads(out workerThreads, out completionPortThreads);
+        Log.Instance.WriteConsole($"⇒ Max worker threads: {workerThreads}", LogLevel.Debug);
+        Log.Instance.WriteConsole($"⇒ Max I/O completion threads: {completionPortThreads}", LogLevel.Debug);
+    }
+
     /// <summary>
     /// A simple try/catch wrapper.
     /// </summary>
@@ -849,9 +1072,9 @@ public class Program
                 Task.Run(() =>
                 {
                     // 440=A4, 494=B4, 523=C5, 587=D5, 659=E5, 698=F5, 784=G5
-                    ConsoleHelper.Beep(440, 200);
+                    ConsoleHelper.Beep(440, 150);
                     Thread.Sleep(1);
-                    ConsoleHelper.Beep(784, 200);
+                    ConsoleHelper.Beep(784, 150);
                 });
             }
 
@@ -880,7 +1103,7 @@ public class Program
         var rset = Resources.ResourceManager.GetResourceSet(System.Globalization.CultureInfo.CurrentUICulture, true, true);
         if (rset != null)
         {
-            Console.WriteLine($"\r\n[Embedded resource keys]");
+            Log.Instance.WriteConsole($"[Embedded resource keys]", LogLevel.Info);
             // Iterate through the ResourceSet
             foreach (DictionaryEntry entry in rset)
             {
@@ -888,8 +1111,8 @@ public class Program
                 string resourceKey = (string)entry.Key;
                 object? resourceValue = entry.Value;
 
-                //Console.WriteLine($"Key: \"{resourceKey}\"   Value: {resourceValue}");
-                Console.WriteLine($"Key: \"{resourceKey}\" ({resourceValue?.GetType()})");
+                //Log.Instance.WriteToConsole($"Key: \"{resourceKey}\"   Value: {resourceValue}");
+                Log.Instance.WriteConsole($"Key: \"{resourceKey}\" ({resourceValue?.GetType()})", LogLevel.Info);
 
                 if (Utils.IsWindowsCompatible())
                 {
@@ -905,6 +1128,7 @@ public class Program
 
     /// <summary>
     /// For use with "C:\>wmic computersystem get"
+    /// The list-style output widths are determined by the header row.
     /// </summary>
     static Dictionary<string, int> GetDistances(string text)
     {
@@ -958,47 +1182,47 @@ public class Program
                 async token =>
                 {
                     await Task.Delay(1500, token); // Simulate an asynchronous operation
-                    Console.WriteLine("Task 1 completed!");
+                    Log.Instance.WriteConsole("Task 1 completed!", LogLevel.Success);
                 },
                 async token =>
                 {
                     await Task.Delay(2000, token); // Simulate a synchronous operation
-                    Console.WriteLine("Task 2 completed!");
+                    Log.Instance.WriteConsole("Task 2 completed!", LogLevel.Success);
                 },
                 async token =>
                 {
                     await Task.Delay(2500, token); // Simulate a third asynchronous operation
-                    Console.WriteLine("Task 3 completed!");
+                    Log.Instance.WriteConsole("Task 3 completed!", LogLevel.Success);
                     throw new Exception("I'm a fake error, ignore me.");
                 },
                 async token =>
                 {
                     await Task.Delay(3000, token); // Simulate a fourth asynchronous operation
-                    Console.WriteLine("Task 4 completed!");
+                    Log.Instance.WriteConsole("Task 4 completed!", LogLevel.Success);
                 },
                 async token =>
                 {
                     await Task.Delay(4000, token); // Simulate a fith asynchronous operation
-                    Console.WriteLine("Task 5 completed!");
+                    Log.Instance.WriteConsole("Task 5 completed!", LogLevel.Success);
                 }
         };
 
         taskRunner.TaskCompleted += (sender, eventArgs) =>
         {
-            Console.WriteLine($"Event fired: Task {eventArgs.CompletedTask.Id} completed!");
-            Console.WriteLine($"Task Status: {eventArgs.CompletedTask.Status}\r\n");
+            Log.Instance.WriteConsole($"Event fired: Task {eventArgs.CompletedTask.Id} completed!", LogLevel.Event);
+            Log.Instance.WriteConsole($"Task Status: {eventArgs.CompletedTask.Status}", LogLevel.Info);
         };
 
         taskRunner.TaskCanceled += (sender, eventArgs) =>
         {
-            Console.WriteLine($"Event fired: Task {eventArgs.CanceledTask?.Id} canceled!");
-            Console.WriteLine($"Task Status: {eventArgs.CanceledTask?.Status}\r\n");
+            Log.Instance.WriteConsole($"Event fired: Task {eventArgs.CanceledTask?.Id} canceled!", LogLevel.Event);
+            Log.Instance.WriteConsole($"Task Status: {eventArgs.CanceledTask?.Status}", LogLevel.Info);
         };
 
         taskRunner.TaskFailed += (sender, eventArgs) =>
         {
-            Console.WriteLine($"Event fired: Task {eventArgs.FailedTask?.Id} faulted!");
-            Console.WriteLine($"Task Error: {eventArgs.Exception.Message}\r\n");
+            Log.Instance.WriteConsole($"Event fired: Task {eventArgs.FailedTask?.Id} faulted!", LogLevel.Event);
+            Log.Instance.WriteConsole($"Task Error: {eventArgs.Exception.Message}", LogLevel.Info);
             wasThereAnyFailure = true;
         };
 
@@ -1006,11 +1230,11 @@ public class Program
         await taskRunner.RunTasksSequentially(taskFactories, cts.Token, stopOnFault);
 
         if (stopOnFault && !wasThereAnyFailure)
-            Console.WriteLine("All tasks completed!\r\n");
+            Log.Instance.WriteConsole("All tasks completed!\r\n", LogLevel.Info);
         else if (stopOnFault && wasThereAnyFailure)
-            Console.WriteLine("Not all tasks were completed!\r\n");
+            Log.Instance.WriteConsole("Not all tasks were completed!\r\n", LogLevel.Info);
         else
-            Console.WriteLine("All tasks completed!\r\n");
+            Log.Instance.WriteConsole("All tasks completed!\r\n", LogLevel.Info);
     }
 
     /// <summary>
@@ -1023,16 +1247,19 @@ public class Program
         CancellationTokenSource cts = new CancellationTokenSource();
         cts.CancelAfter(5000); // Cancel after 5 seconds (adjust as needed)
 
-        actionRunner.ActionCompleted += (sender, args) => {
-            Console.WriteLine($"Action completed: {args.Action.Method.Name}");
+        actionRunner.ActionCompleted += (sender, args) =>
+        {
+            Log.Instance.WriteConsole($"Action completed: {args.Action.Method.Name}", LogLevel.Event);
         };
 
-        actionRunner.ActionCanceled += (sender, args) => {
-            Console.WriteLine($"Action canceled: {args.Action.Method.Name}");
+        actionRunner.ActionCanceled += (sender, args) =>
+        {
+            Log.Instance.WriteConsole($"Action canceled: {args.Action.Method.Name}", LogLevel.Event);
         };
 
-        actionRunner.ActionFailed += (sender, args) => {
-            Console.WriteLine($"Action failed: {args.Action.Method.Name}, Exception: {args.Exception?.Message}");
+        actionRunner.ActionFailed += (sender, args) =>
+        {
+            Log.Instance.WriteConsole($"Action failed: {args.Action.Method.Name}, Exception: {args.Exception?.Message}", LogLevel.Event);
         };
 
         List<Action> actions = new List<Action>
@@ -1040,12 +1267,12 @@ public class Program
                 () => // 1st
                 {
                     Thread.Sleep(1000);
-                    Console.WriteLine("Action 1 complete");
+                    Log.Instance.WriteConsole("Action 1 complete", LogLevel.Success);
                 },
                 () => // 2nd
                 {
                     Thread.Sleep(1000);
-                    Console.WriteLine("Action 2 complete");
+                    Log.Instance.WriteConsole("Action 2 complete", LogLevel.Success);
                 },
                 () => // 3rd
                 {
@@ -1055,17 +1282,17 @@ public class Program
                 () => // 4th
                 {
                     Thread.Sleep(3000);
-                    Console.WriteLine("Action 4 complete");
+                    Log.Instance.WriteConsole("Action 4 complete", LogLevel.Success);
                 },
             };
 
         //Action act1 = new(() => { 
         //    Thread.Sleep(1000);
-        //    Console.WriteLine("Action 1 complete");
+        //    Log.Instance.WriteToConsole("Action 1 complete", LogLevel.Info);
         //});
         //Action act2 = new(() => {
         //    Thread.Sleep(1000);
-        //    Console.WriteLine("Action 2 complete");
+        //    Log.Instance.WriteToConsole("Action 2 complete", LogLevel.Info);
         //});
         //Action act3 = new(() => {
         //    Thread.Sleep(1000);
@@ -1073,7 +1300,7 @@ public class Program
         //});
         //Action act4 = new(() => {
         //    Thread.Sleep(1000);
-        //    Console.WriteLine("Action 4 complete");
+        //    Log.Instance.WriteToConsole("Action 4 complete", LogLevel.Info);
         //});
         //var actions = Utils.CreateList(act1, act2, act3, act4);
 
@@ -1092,26 +1319,26 @@ public class Program
 
         Action[] actions = new Action[]
         {
-                () =>
-                {
-                    Console.WriteLine("Action 1");
-                    Thread.Sleep(1000);
-                },
-                () =>
-                {
-                    Console.WriteLine("Action 2");
-                    Thread.Sleep(1000);
-                },
-                () =>
-                {
-                    Thread.Sleep(1000);
-                    throw new Exception("Fake error in Action 3");
-                },
-                () =>
-                {
-                    Console.WriteLine("Action 4");
-                    Thread.Sleep(1000);
-                },
+            () =>
+            {
+                Log.Instance.WriteConsole("Action 1", LogLevel.Info);
+                Thread.Sleep(1000);
+            },
+            () =>
+            {
+                Log.Instance.WriteConsole("Action 2", LogLevel.Info);
+                Thread.Sleep(1000);
+            },
+            () =>
+            {
+                Thread.Sleep(1000);
+                throw new Exception("Fake error in Action 3");
+            },
+            () =>
+            {
+                Log.Instance.WriteConsole("Action 4", LogLevel.Info);
+                Thread.Sleep(1000);
+            },
         };
 
         CancellationTokenSource cts = new CancellationTokenSource();
@@ -1119,17 +1346,17 @@ public class Program
 
         taskRunner.TaskCompleted += (sender, args) =>
         {
-            Console.WriteLine($"Action completed. Task {args.CompletedTask.Id}\r\n");
+            Log.Instance.WriteConsole($"Action completed. Task {args.CompletedTask.Id}\r\n", LogLevel.Event);
         };
 
         taskRunner.TaskCanceled += (sender, eventArgs) =>
         {
-            Console.WriteLine($"Event fired: Action canceled! Task {eventArgs.CanceledTask?.Id}\r\n");
+            Log.Instance.WriteConsole($"Event fired: Action canceled! Task {eventArgs.CanceledTask?.Id}\r\n", LogLevel.Event);
         };
 
         taskRunner.TaskFailed += (sender, args) =>
         {
-            Console.WriteLine($"Action failed: {args.Exception.Message}");
+            Log.Instance.WriteConsole($"Action failed: {args.Exception.Message}", LogLevel.Event);
             wasThereAnyFailure = true;
         };
 
@@ -1137,11 +1364,11 @@ public class Program
         await taskRunner.RunActionsSequentially(actions, cts.Token, stopOnFault);
 
         if (stopOnFault && !wasThereAnyFailure)
-            Console.WriteLine("All actions completed!\r\n");
+            Log.Instance.WriteConsole("All actions completed!\r\n", LogLevel.Info);
         else if (stopOnFault && wasThereAnyFailure)
-            Console.WriteLine("Not all actions were completed!\r\n");
+            Log.Instance.WriteConsole("Not all actions were completed!\r\n", LogLevel.Info);
         else
-            Console.WriteLine("All actions completed!\r\n");
+            Log.Instance.WriteConsole("All actions completed!\r\n", LogLevel.Info);
     }
 
     /// <summary>
@@ -1157,41 +1384,41 @@ public class Program
                 Task.Run(async () =>
                 {
                     await Task.Delay(1000, cts.Token); // Simulate an asynchronous operation
-                    Console.WriteLine("Task 1 completed!");
+                    Log.Instance.WriteConsole("Task 1 completed!", LogLevel.Info);
                 }),
                 Task.Run(async () =>
                 {
                     await Task.Delay(1500, cts.Token); // Simulate another asynchronous operation
-                    Console.WriteLine("Task 2 completed!");
+                    Log.Instance.WriteConsole("Task 2 completed!", LogLevel.Info);
                     throw new Exception("I'm a fake error, ignore me.");
                 }),
                 Task.Run(async () =>
                 {
                     await Task.Delay(2000, cts.Token); // Simulate a third asynchronous operation
-                    Console.WriteLine("Task 3 completed!");
+                    Log.Instance.WriteConsole("Task 3 completed!", LogLevel.Info);
                 }),
                 Task.Run(async () =>
                 {
                     await Task.Delay(3000, cts.Token); // Simulate a third asynchronous operation
-                    Console.WriteLine("Task 4 completed!");
+                    Log.Instance.WriteConsole("Task 4 completed!", LogLevel.Info);
                 })
         };
 
         taskRunner.TaskCompleted += (sender, eventArgs) =>
         {
-            Console.WriteLine($"Event fired: Task {eventArgs.CompletedTask.Id} completed!");
-            Console.WriteLine($"Task Status: {eventArgs.CompletedTask.Status}\r\n");
+            Log.Instance.WriteConsole($"Event fired: Task {eventArgs.CompletedTask.Id} completed!", LogLevel.Event);
+            Log.Instance.WriteConsole($"Task Status: {eventArgs.CompletedTask.Status}\r\n", LogLevel.Info);
         };
 
         taskRunner.TaskFailed += (sender, eventArgs) =>
         {
-            Console.WriteLine($"Event fired: Task {eventArgs.FailedTask?.Id} faulted!");
-            Console.WriteLine($"Task Error: {eventArgs.Exception.Message}\r\n");
+            Log.Instance.WriteConsole($"Event fired: Task {eventArgs.FailedTask?.Id} faulted!", LogLevel.Event);
+            Log.Instance.WriteConsole($"Task Error: {eventArgs.Exception.Message}\r\n", LogLevel.Info);
         };
 
         await taskRunner.RunTasksSequentially(tasks, true);
 
-        Console.WriteLine("All tasks completed!");
+        Log.Instance.WriteConsole("All tasks completed!", LogLevel.Success);
     }
 
     /// <summary>
@@ -1203,27 +1430,27 @@ public class Program
         {
                 async () =>
                 {
-                    Console.WriteLine($" • Func<Task> 1: t{Thread.CurrentThread.ManagedThreadId}");
+                    Log.Instance.WriteConsole($" • Func<Task> 1: t{Thread.CurrentThread.ManagedThreadId}", LogLevel.Info);
                     await RunThreadTest();
-                    Console.WriteLine($"Completed Func<Task> 1!");
+                    Log.Instance.WriteConsole($"Completed Func<Task> 1!", LogLevel.Info);
                 },
                 async () =>
                 {
-                    Console.WriteLine($" • Func<Task> 2: t{Thread.CurrentThread.ManagedThreadId}");
+                    Log.Instance.WriteConsole($" • Func<Task> 2: t{Thread.CurrentThread.ManagedThreadId}", LogLevel.Info);
                     await RunThreadTest();
-                    Console.WriteLine($"Completed Func<Task> 2!");
+                    Log.Instance.WriteConsole($"Completed Func<Task> 2!", LogLevel.Info);
                 },
                 async () =>
                 {
-                    Console.WriteLine($" • Func<Task> 3: t{Thread.CurrentThread.ManagedThreadId}");
+                    Log.Instance.WriteConsole($" • Func<Task> 3: t{Thread.CurrentThread.ManagedThreadId}", LogLevel.Info);
                     await RunThreadTest();
-                    Console.WriteLine($"Completed Func<Task> 3!");
+                    Log.Instance.WriteConsole($"Completed Func<Task> 3!", LogLevel.Info);
                 },
                 async () =>
                 {
-                    Console.WriteLine($" • Func<Task> 4: t{Thread.CurrentThread.ManagedThreadId}");
+                    Log.Instance.WriteConsole($" • Func<Task> 4: t{Thread.CurrentThread.ManagedThreadId}", LogLevel.Info);
                     await RunThreadTest();
-                    Console.WriteLine($"Completed Func<Task> 4!");
+                    Log.Instance.WriteConsole($"Completed Func<Task> 4!", LogLevel.Info);
                 }
         };
 
@@ -1239,27 +1466,27 @@ public class Program
         // Wait for all tasks to finish (blocking call).
         await Task.WhenAll(tasks);
 
-        Console.WriteLine("All tasks completed!");
+        Log.Instance.WriteConsole("All tasks completed!", LogLevel.Success);
     }
 
     static async Task RunThreadTest()
     {
-        Console.WriteLine($" • CallStackMethod.ConfigureAwait(true): t{Thread.CurrentThread.ManagedThreadId}");
+        Log.Instance.WriteConsole($" • CallStackMethod.ConfigureAwait(true): t{Thread.CurrentThread.ManagedThreadId}", LogLevel.Info);
         // This is the default which tells the compiler that you want
         // to return to the calling thread after the await is finished.
         await CallStackMethod().ConfigureAwait(true);
 
-        Console.WriteLine($" • CallStackMethod.ConfigureAwait(false): t{Thread.CurrentThread.ManagedThreadId}");
+        Log.Instance.WriteConsole($" • CallStackMethod.ConfigureAwait(false): t{Thread.CurrentThread.ManagedThreadId}", LogLevel.Info);
         // This tells the compiler that we do not care if we
         // return to the calling thread after the await is finished.
         await CallStackMethod().ConfigureAwait(false);
 
-        Console.WriteLine($" • RunThreadTest: t{Thread.CurrentThread.ManagedThreadId}");
+        Log.Instance.WriteConsole($" • RunThreadTest: t{Thread.CurrentThread.ManagedThreadId}", LogLevel.Info);
     }
 
     static async Task CallStackMethod()
     {
-        Console.WriteLine($" • SomeOtherMethod: t{Thread.CurrentThread.ManagedThreadId}");
+        Log.Instance.WriteConsole($" • SomeOtherMethod: t{Thread.CurrentThread.ManagedThreadId}", LogLevel.Info);
         await Task.Delay(1000);
     }
     #endregion
@@ -1275,13 +1502,13 @@ public class Program
             // For Windows only.
             var os = GetOSSettings();
             // CodePage 1252 character encoding is a superset of ISO 8859-1.
-            Console.WriteLine($"⇒ {os["Caption"]} • {os["OSArchitecture"]} • v{os["Version"]}");
-            Console.WriteLine($"⇒ LastBoot {WMICOffsetConversion(os["LastBootUpTime"])} • InstallDate {WMICOffsetConversion(os["InstallDate"])}");
-            Console.WriteLine($"⇒ CodePage {os["CodeSet"]} • {os["SystemDirectory"]} • {os["CSName"]} • Status {os["Status"]}");
-            Console.WriteLine($"⇒ BootDevice \"{os["BootDevice"]}\" • SystemDevice \"{os["SystemDevice"]}\"");
-            Console.WriteLine($"⇒ Organization \"{os["Organization"]}\" • SerialNumber \"{os["SerialNumber"]}\"");
+            Log.Instance.WriteConsole($"⇒ {os["Caption"]} • {os["OSArchitecture"]} • v{os["Version"]}", LogLevel.Info);
+            Log.Instance.WriteConsole($"⇒ LastBoot {WMICOffsetConversion(os["LastBootUpTime"])} • InstallDate {WMICOffsetConversion(os["InstallDate"])}", LogLevel.Info);
+            Log.Instance.WriteConsole($"⇒ CodePage {os["CodeSet"]} • {os["SystemDirectory"]} • {os["CSName"]} • Status {os["Status"]}", LogLevel.Info);
+            Log.Instance.WriteConsole($"⇒ BootDevice \"{os["BootDevice"]}\" • SystemDevice \"{os["SystemDevice"]}\"", LogLevel.Info);
+            Log.Instance.WriteConsole($"⇒ Organization \"{os["Organization"]}\" • SerialNumber \"{os["SerialNumber"]}\"", LogLevel.Info);
             //var cpu = GetCPUSettings();
-            //Console.WriteLine($"⇒ Processor \"{cpu["Name"]}\" • Cores \"{cpu["NumberOfCores"]}\"");
+            //Log.Instance.WriteToConsole($"⇒ Processor \"{cpu["Name"]}\" • Cores \"{cpu["NumberOfCores"]}\"", LogLevel.Info);
         }
         catch (KeyNotFoundException) { }
     }
@@ -1312,12 +1539,12 @@ public class Program
         // Perform a TryParseExact on our adjusted date string.
         if (DateTime.TryParseExact(dateString, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime result))
         {
-            //Console.WriteLine("Converted '{0}' to {1}.", dateString, result);
+            //Log.Instance.WriteToConsole($"Converted '{dateString}' to {result}.", LogLevel.Info);
             return $"{result}";
         }
         else
         {
-            //Console.WriteLine("Unable to convert '{0}' to a date.", dateString);
+            //Log.Instance.WriteToConsole($"Unable to convert '{dateString}' to a date.", LogLevel.Info);
             return $"{dateString}";
         }
     }
@@ -1507,6 +1734,80 @@ public class Program
     /// Windows only.
     /// </summary>
     /// <returns><see cref="Dictionary{TKey, TValue}"/></returns>
+    static List<Dictionary<string, string>> GetWindowsShares()
+    {
+        List<Dictionary<string, string>> result = new();
+        var lines = CallWMIC("SHARE");
+        // This will contain a line item for every process in the system.
+        if (lines.Count > 1)
+        {
+            Dictionary<string, int> distances = GetDistances(lines[0]);
+            for (int i = 1; i < lines.Count - 1; i++)
+            {
+                int index = 0;
+                string data = lines[i];
+                Dictionary<string, string> individual = new();
+                foreach (var kvp in distances)
+                {
+                    if (!string.IsNullOrEmpty(kvp.Key))
+                    {
+                        string element = $"{kvp.Key}" + new string('.', kvp.Value);
+
+                        if (data.Length >= index + element.Length)
+                        {
+                            string value = $"{data.Substring(index, element.Length)}";
+                            individual[$"{kvp.Key}"] = value.Trim();
+                        }
+                        index += element.Length;
+                    }
+                }
+                result.Add(individual);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Windows only.
+    /// </summary>
+    /// <returns><see cref="Dictionary{TKey, TValue}"/></returns>
+    static List<Dictionary<string, string>> GetWindowsPrinters()
+    {
+        List<Dictionary<string, string>> result = new();
+        var lines = CallWMIC("PRINTER");
+        // This will contain a line item for every process in the system.
+        if (lines.Count > 1)
+        {
+            Dictionary<string, int> distances = GetDistances(lines[0]);
+            for (int i = 1; i < lines.Count - 1; i++)
+            {
+                int index = 0;
+                string data = lines[i];
+                Dictionary<string, string> individual = new();
+                foreach (var kvp in distances)
+                {
+                    if (!string.IsNullOrEmpty(kvp.Key))
+                    {
+                        string element = $"{kvp.Key}" + new string('.', kvp.Value);
+
+                        if (data.Length >= index + element.Length)
+                        {
+                            string value = $"{data.Substring(index, element.Length)}";
+                            individual[$"{kvp.Key}"] = value.Trim();
+                        }
+                        index += element.Length;
+                    }
+                }
+                result.Add(individual);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Windows only.
+    /// </summary>
+    /// <returns><see cref="Dictionary{TKey, TValue}"/></returns>
     static Dictionary<string, string> GetCPUSettings()
     {
         Dictionary<string, string> result = new();
@@ -1545,7 +1846,7 @@ public class Program
             var available = GetWMICOptions();
             alias = available[Random.Shared.Next(0, available.Length)].Trim();
             Console.ForegroundColor = ConsoleColor.White;
-            Console.WriteLine($"Showing all values for \"{alias}\"...");
+            Log.Instance.WriteConsole($"Showing all values for \"{alias}\"...", LogLevel.Info);
             Console.ForegroundColor = ConsoleColor.Gray;
         }
 
@@ -1562,11 +1863,13 @@ public class Program
         // Buffer for holding app output
         var output = new List<string>();
         var error = new List<string>();
-        proc.OutputDataReceived += (s, e) => {
+        proc.OutputDataReceived += (s, e) =>
+        {
             if (!string.IsNullOrEmpty(e.Data))
                 output.Add(e.Data);
         };
-        proc.ErrorDataReceived += (s, e) => {
+        proc.ErrorDataReceived += (s, e) =>
+        {
             if (!string.IsNullOrEmpty(e.Data))
                 error.Add(e.Data);
         };
@@ -1578,7 +1881,7 @@ public class Program
             if (!wait)
             {
                 //var toKill = Process.GetProcessById(proc.Id);
-                Console.WriteLine($">> Got tired of waiting, killing it now...");
+                Log.Instance.WriteConsole($">> Got tired of waiting, killing it now...", LogLevel.Info);
                 proc.Kill();
             }
         }
@@ -1587,7 +1890,7 @@ public class Program
         {
             Console.ForegroundColor = ConsoleColor.Red;
             foreach (var item in error)
-                Console.WriteLine($"{item}");
+                Log.Instance.WriteConsole($"{item}", LogLevel.Info);
             Console.ForegroundColor = ConsoleColor.Gray;
             return new List<string>();
         }
@@ -1682,4 +1985,125 @@ public class Program
         };
     }
     #endregion
+
+    #region [PowerShell Stuff]
+    /// <summary>
+    /// For collecting files that have alternate data streams.
+    /// command = "Get-ChildItem -Recurse | Get-Item -Stream Zone.Identifier -ErrorAction SilentlyContinue | Select-Object FileName"
+    /// </summary>
+    public static List<string> RunPowerShellCommand(string workingDirectory, string command)
+    {
+        var proc = new Process();
+        proc.StartInfo.FileName = "powershell.exe";
+        proc.StartInfo.Arguments = $"-Command \"{command}\"";
+        proc.StartInfo.WorkingDirectory = string.IsNullOrEmpty(workingDirectory) ? Directory.GetCurrentDirectory() : workingDirectory;
+        proc.StartInfo.UseShellExecute = false;
+        proc.StartInfo.RedirectStandardOutput = true;
+        proc.StartInfo.RedirectStandardOutput = true;
+        proc.StartInfo.RedirectStandardError = true;
+        // Buffer for holding app output
+        var output = new List<string>();
+        var error = new List<string>();
+        proc.OutputDataReceived += (s, e) =>
+        {
+            if (!string.IsNullOrEmpty(e.Data))
+                output.Add(e.Data);
+        };
+        proc.ErrorDataReceived += (s, e) =>
+        {
+            if (!string.IsNullOrEmpty(e.Data))
+                error.Add(e.Data);
+        };
+        if (proc.Start())
+        {
+            proc.BeginOutputReadLine();
+            proc.BeginErrorReadLine();
+            bool wait = proc.WaitForExit(TimeSpan.FromSeconds(60)); // blocking call
+            if (!wait)
+            {
+                //var toKill = Process.GetProcessById(proc.Id);
+                Log.Instance.WriteConsole($">> Got tired of waiting, killing it now...", LogLevel.Info);
+                proc.Kill();
+            }
+        }
+
+        if (error.Count > 0)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            foreach (var item in error)
+                Log.Instance.WriteConsole($"{item}", LogLevel.Info);
+            Console.ForegroundColor = ConsoleColor.Gray;
+            return new List<string>();
+        }
+        return output;
+    }
+    #endregion
+
+    #region [Superfluous]
+    /// <summary>
+    /// QueueUserWorkItem is a fire-n-forget mechanism, and monitoring its completion 
+    /// directly is not part of its design. Consider using Task.Run or TaskFactory.StartNew 
+    /// if you require more control over asynchronous operations or if you need to track 
+    /// completion through tasks and their completion states.
+    /// </summary>
+    static void TestThreadPoolQueue(int numItems = 20)
+    {
+        double totalTime = 0d;
+        int workItemCount = 0;
+        object lockObject = new object();
+        // Enqueue user work items.
+        for (int i = 0; i < numItems; i++)
+        {
+            Log.Instance.WriteConsole($"Starting thread #{workItemCount}.", LogLevel.Info);
+            Interlocked.Increment(ref workItemCount); // Increment counter
+            ThreadPool.QueueUserWorkItem(state => {
+                try
+                {
+                    var vsw = ValueStopwatch.StartNew();
+
+                    // Perform some fake work.
+                    if (Utils.CoinFlip())
+                        Thread.Sleep(Random.Shared.Next(10, 5001));
+                    else
+                        Thread.Sleep(Random.Shared.Next(100, 2001));
+
+                    // On completion, decrement counter.
+                    lock (lockObject)
+                    {
+                        Interlocked.Decrement(ref workItemCount);
+                        var ts = vsw.GetElapsedTime();
+                        totalTime += ts.TotalSeconds;
+                        Log.Instance.WriteConsole($"Thread #{workItemCount} finished ({vsw.GetElapsedTime().ToReadableString()})", LogLevel.Info);
+                        if (workItemCount == 0)
+                        {
+                            state = $"Average was {(totalTime/(double)numItems):N3} seconds";
+                            // The object state will typically be null, but we'll pass it anyways.
+                            OnUserWorkItemComplete?.Invoke(state, "All work items are done.");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    string details = ex?.InnerException != null ? $"{ex?.Message} ⇒ Inner Exception: {ex?.InnerException.Message}" : $"{ex?.Message}";
+                    Log.Instance.WriteConsole($"ThreadPoolException: {details}", LogLevel.Error);
+                }
+            });
+        }
+    }
+    public static event Action<object?, string> OnUserWorkItemComplete = (item, msg) => { };
+    #endregion
+
+    /// <summary>
+    /// Domain exception handler.
+    /// </summary>
+    static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        Console.CursorVisible = true;
+        Log.Instance.WriteConsole("!!! Caught unhandled exception event on " + DateTime.Now.ToLongDateString() + " at " + DateTime.Now.ToLongTimeString() + " !!!", LogLevel.Error);
+        var ex = e.ExceptionObject as Exception;
+        if (ex != null) { Log.Instance.WriteConsole(FormatException(ex), LogLevel.Error); }
+        // In the event that we're launched from a shortcut,
+        // allow enough pause for the user to see the error.
+        Thread.Sleep(5000);
+    }
 }

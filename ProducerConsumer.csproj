@@ -8,14 +8,31 @@
     <StartupObject>ProducerConsumer.Program</StartupObject>
     <ApplicationIcon>Logo.ico</ApplicationIcon>
     <PlatformTarget>x64</PlatformTarget>
+    <!--
+       The RollForward property controls how the application chooses a runtime when multiple runtime versions are available. This value is output to the RepoBackup.runtimeconfig.json as the "rollForward" setting.
+    -->
+    <RollForward>LatestMinor</RollForward>
+    <!-- 
+       Gets rid of all the unecessary pathing that MS adds and makes the output match the traditional .NET Framework builds.
+    -->
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <!-- 
+       Whether the SDK generates error NETSDK1148 when MSBuild detects duplicate files in the publish output, but can't determine which files to remove.
+    -->
+    <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="Fonts\3270-Regular.ttf" />
     <None Remove="Logo.ico" />
     <None Remove="Warning.ico" />
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="Fonts\3270-Regular.ttf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="Logo.ico" />
     <Content Include="Warning.ico" />
   </ItemGroup>
