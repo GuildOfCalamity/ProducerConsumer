@@ -466,7 +466,7 @@ public class ChannelManager : IDisposable
                             OnBeginInvoke?.Invoke(item, $"Invoking \"{item?.Title}\" ID #{item?.Id} on thread {Thread.CurrentThread.ManagedThreadId} [{DateTime.Now}]");
                             var vsw = ValueStopwatch.StartNew();
                             item?.ToRun?.Invoke();
-                            OnEndInvoke?.Invoke(item, $"Invoked \"{item?.Title}\" ID #{item?.Id} ran for {vsw.GetElapsedTime().GetReadableTime()}.");
+                            OnEndInvoke?.Invoke(item, $"Invoked \"{item?.Title}\" ID #{item?.Id} ran for {vsw.GetElapsedTime().ToReadableString()}.");
                         }
                         catch (Exception ex)
                         {
