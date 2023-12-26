@@ -17,7 +17,7 @@ namespace ProducerConsumer;
 public class Settings
 {
     private string _FontName = "Consolas";
-    private int _FontSize = 32;
+    private int _FontSize = 24;
     private int _TestNumber = 1;
     private Settings? _Settings = null;
 

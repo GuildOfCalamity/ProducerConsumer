@@ -95,10 +95,199 @@ public static class Utils
         return false;
     }
 
+    /// <summary>
+    /// Converts the <see cref="DateTime"/> to amount in the past.
+    /// </summary>
+    public static string ToTimeAgo(this DateTime baseTime)
+    {
+        var _timeSpan = DateTime.Now - baseTime;
+
+        if (_timeSpan.TotalMinutes <= 0.1d)
+            return "just now";
+
+        if (_timeSpan.TotalMinutes <= 1.0d)
+            return $"{_timeSpan.TotalSeconds:N0} seconds ago";
+
+        if (_timeSpan.TotalMinutes < 60d)
+            return $"{_timeSpan.TotalMinutes:N0} minutes ago";
+
+        if (_timeSpan.TotalHours < 2d)
+            return $"{_timeSpan.TotalHours:N0} hour ago";
+
+        if (_timeSpan.TotalHours < 24d)
+            return $"{_timeSpan.TotalHours:N0} hours ago";
+
+        if (_timeSpan.TotalDays < 2d)
+            return $"{_timeSpan.TotalDays:N0} day ago";
+
+        if (_timeSpan.TotalDays < 7d)
+            return $"{_timeSpan.TotalDays:N0} days ago";
+
+        if (_timeSpan.TotalDays >= 7d && _timeSpan.TotalDays < 29d)
+        {
+            int weeks = Convert.ToInt32(Math.Floor((double)_timeSpan.Days / 7d));
+            return weeks <= 1 ? "1 week ago" : weeks + " weeks ago";
+        }
+
+        if (_timeSpan.TotalDays > 29d && _timeSpan.TotalDays < 365d)
+        {
+            int months = Convert.ToInt32(Math.Floor((double)_timeSpan.Days / 29d));
+            return months <= 1 ? "1 month ago" : months + " months ago";
+        }
+
+        if (Convert.ToDouble(_timeSpan.TotalDays / 365d) < 2d)
+            return "1 year ago";
+
+        return Convert.ToDouble(_timeSpan.TotalDays / 365d).ToString("#") + " years ago";
+    }
+
+    /// <summary>
+    /// Displays a readable sentence as to when the time happened.
+    /// e.g. 'One second ago' or '2 months ago'
+    /// </summary>
+    public static string ToTimeAgo(this DateTime value, bool useUTC = false)
+    {
+        TimeSpan ts;
+
+        if (useUTC)
+            ts = new TimeSpan(DateTime.UtcNow.Ticks - value.Ticks);
+        else
+            ts = new TimeSpan(DateTime.Now.Ticks - value.Ticks);
+
+        double delta = ts.TotalSeconds;
+        if (delta < 60)
+            return ts.Seconds == 1 ? "one second ago" : ts.Seconds + " seconds ago";
+        if (delta < 120)
+            return "a minute ago";
+        if (delta < 2700) // 45 * 60
+            return ts.Minutes + " minutes ago";
+        if (delta < 5400) // 90 * 60
+            return "an hour ago";
+        if (delta < 86400) // 24 * 60 * 60
+            return ts.Hours + " hours ago";
+        if (delta < 172800) // 48 * 60 * 60
+            return "yesterday";
+        if (delta < 2592000) // 30 * 24 * 60 * 60
+            return ts.Days + " days ago";
+        if (delta < 31104000) // 12 * 30 * 24 * 60 * 60
+        {
+            int months = Convert.ToInt32(Math.Floor((double)ts.Days / 30));
+            return months <= 1 ? "one month ago" : months + " months ago";
+        }
+        int years = Convert.ToInt32(Math.Floor((double)ts.Days / 365));
+        return years <= 1 ? "one year ago" : years + " years ago";
+    }
+
+    /// <summary>
+    /// Similar to <see cref="GetReadableTime(TimeSpan)"/>.
+    /// </summary>
+    /// <param name="timeSpan"><see cref="TimeSpan"/></param>
+    /// <returns>formatted text</returns>
+    public static string ToReadableString(this TimeSpan span)
+    {
+        //return string.Format("{0}{1}{2}{3}",
+        //    span.Duration().Days > 0 ? string.Format("{0:0} day{1}, ", span.Days, span.Days == 1 ? string.Empty : "s") : string.Empty,
+        //    span.Duration().Hours > 0 ? string.Format("{0:0} hr{1}, ", span.Hours, span.Hours == 1 ? string.Empty : "s") : string.Empty,
+        //    span.Duration().Minutes > 0 ? string.Format("{0:0} min{1}, ", span.Minutes, span.Minutes == 1 ? string.Empty : "s") : string.Empty,
+        //    span.Duration().Seconds > 0 ? string.Format("{0:0} sec{1}", span.Seconds, span.Seconds == 1 ? string.Empty : "s") : string.Empty);
+
+        var parts = new StringBuilder();
+        if (span.Days > 0)
+            parts.Append($"{span.Days} day{(span.Days == 1 ? string.Empty : "s")} ");
+        if (span.Hours > 0)
+            parts.Append($"{span.Hours} hour{(span.Hours == 1 ? string.Empty : "s")} ");
+        if (span.Minutes > 0)
+            parts.Append($"{span.Minutes} minute{(span.Minutes == 1 ? string.Empty : "s")} ");
+        if (span.Seconds > 0)
+            parts.Append($"{span.Seconds} second{(span.Seconds == 1 ? string.Empty : "s")} ");
+        if (span.Milliseconds > 0)
+            parts.Append($"{span.Milliseconds} millisecond{(span.Milliseconds == 1 ? string.Empty : "s")} ");
+
+        return parts.ToString().Trim();
+    }
+
+    /// <summary>
+    /// Sometimes "TimeOfDay" is not the clearest meaning for TimeSpan, this makes it explicit.
+    /// </summary>
+    /// <param name="dateTime"><see cref="DateTime"/></param>
+    /// <returns><see cref="TimeSpan"/></returns>
+    public static TimeSpan ToTimeSpan(this DateTime dateTime) => dateTime.TimeOfDay;
+
+    /// <summary>
+    /// The lexical representation for duration is the ISO8601 extended format PnYn MnDTnH nMnS,<br/>
+    /// where nY represents the number of years, nM the number of months, nD the number of days,<br/>
+    /// 'T' is the date/time separator, nH the number of hours, nM the number of minutes and nS the<br/>
+    /// number of seconds. The number of seconds can include decimal digits to arbitrary precision.<br/>
+    /// An optional preceding minus sign ('-') is allowed, to indicate a negative duration.<br/>
+    /// If the sign is omitted a positive duration is indicated.<br/>
+    /// <see href="http://www.w3.org/TR/xmlschema-2/#duration"/><br/>
+    /// </summary>
+    /// <example>
+    /// <code>TimeSpan ts = System.Xml.XmlConvert.ToTimeSpan("PT72H");</code>
+    /// </example>
+    /// <returns><see cref="TimeSpan"/></returns>
+    public static TimeSpan ToTimeSpan(this string isoDuration)
+    {
+        try
+        {
+            var ts = System.Xml.XmlConvert.ToTimeSpan(isoDuration);
+            return ts;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"ToTimeSpan: {ex.Message}");
+            return TimeSpan.Zero;
+        }
+    }
+
+    public static void Deconstruct(this DateTime dateTime, out int year, out int month, out int day) => (year, month, day) = (dateTime.Year, dateTime.Month, dateTime.Day);
+    public static void Deconstruct(this DateTime dateTime, out int year, out int month, out int day, out int hour, out int minute, out int second) => (year, month, day, hour, minute, second) = (dateTime.Year, dateTime.Month, dateTime.Day, dateTime.Hour, dateTime.Minute, dateTime.Second);
+    public static TimeSpan Multiply(this TimeSpan timeSpan, double scalar) => new TimeSpan((long)(timeSpan.Ticks * scalar));
+    public static DateTime ConvertToLastDayOfMonth(this DateTime date) => new DateTime(date.Year, date.Month, DateTime.DaysInMonth(date.Year, date.Month));
+    public static DateTime StartOfMonth(this DateTime dateTime) => dateTime.Date.AddDays(-1 * (dateTime.Day - 1));
+    public static DateTime EndOfMonth(this DateTime dateTime) => new DateTime(dateTime.Year, dateTime.Month, DateTime.DaysInMonth(dateTime.Year, dateTime.Month));
+
+    /// <summary>
+    /// Similar to <see cref="GetReadableTime(DateTime, bool)"/>.
+    /// </summary>
+    /// <param name="timeSpan"><see cref="TimeSpan"/></param>
+    /// <returns>formatted text</returns>
     public static string GetReadableTime(this TimeSpan timeSpan)
     {
-        // Simplified version:
-        //return string.Format("{0} day(s) {1} hour(s) {2} minute(s) {3} second(s) and {4} millisecond(s)", timeSpan.Days, timeSpan.Hours, timeSpan.Minutes, timeSpan.Seconds, timeSpan.Milliseconds);
+        var ts = new TimeSpan(DateTime.Now.Ticks - timeSpan.Ticks);
+        var totMinutes = ts.TotalSeconds / 60;
+        var totHours = ts.TotalSeconds / 3_600;
+        var totDays = ts.TotalSeconds / 86_400;
+        var totWeeks = ts.TotalSeconds / 604_800;
+        var totMonths = ts.TotalSeconds / 2_592_000;
+        var totYears = ts.TotalSeconds / 31_536_000;
+
+        var parts = new StringBuilder();
+        if (totYears > 0.1)
+            parts.Append($"{totYears:N1} years ");
+        if (totMonths > 0.1)
+            parts.Append($"{totMonths:N1} months ");
+        if (totWeeks > 0.1)
+            parts.Append($"{totWeeks:N1} weeks ");
+        if (totDays > 0.1)
+            parts.Append($"{totDays:N1} days ");
+        if (totHours > 0.1)
+            parts.Append($"{totHours:N1} hours ");
+        if (totMinutes > 0.1)
+            parts.Append($"{totMinutes:N1} minutes ");
+
+        return parts.ToString().Trim();
+    }
+
+    /// <summary>
+    /// Similar to <see cref="GetReadableTime(TimeSpan)"/>.
+    /// </summary>
+    /// <param name="timeSpan"><see cref="TimeSpan"/></param>
+    /// <returns>formatted text</returns>
+    public static string GetReadableTime(this DateTime dateTime, bool addMilliseconds = false)
+    {
+        var timeSpan = new TimeSpan(DateTime.Now.Ticks - dateTime.Ticks);
+        //double totalSecs = timeSpan.TotalSeconds;
 
         var parts = new StringBuilder();
         if (timeSpan.Days > 0)
@@ -109,16 +298,139 @@ public static class Utils
             parts.AppendFormat("{0} {1} ", timeSpan.Minutes, timeSpan.Minutes == 1 ? "minute" : "minutes");
         if (timeSpan.Seconds > 0)
             parts.AppendFormat("{0} {1} ", timeSpan.Seconds, timeSpan.Seconds == 1 ? "second" : "seconds");
-        if (timeSpan.Milliseconds > 0)
+        if (addMilliseconds && timeSpan.Milliseconds > 0)
             parts.AppendFormat("{0} {1}", timeSpan.Milliseconds, timeSpan.Milliseconds == 1 ? "millisecond" : "milliseconds");
 
         return parts.ToString().TrimEnd();
     }
 
     /// <summary>
+    /// Check to see if a date is between two dates.
+    /// </summary>
+    /// <param name="dt"></param>
+    /// <param name="rangeBeg"></param>
+    /// <param name="rangeEnd"></param>
+    /// <returns>true if between range, false otherwise</returns>
+    public static bool Between(this DateTime dt, DateTime rangeBeg, DateTime rangeEnd)
+    {
+        return dt.Ticks >= rangeBeg.Ticks && dt.Ticks <= rangeEnd.Ticks;
+    }
+
+    /// <summary>
+    /// Gets a <see cref="DateTime"/> object representing the time until midnight.
+    /// </summary>
+    /// <example>
+    /// var hoursUntilMidnight = TimeUntilMidnight().TimeOfDay.TotalHours;
+    /// </example>
+    public static DateTime TimeUntilMidnight()
+    {
+        DateTime now = DateTime.Now;
+        DateTime midnight = now.Date.AddDays(1);
+        TimeSpan timeUntilMidnight = midnight - now;
+        return new DateTime(timeUntilMidnight.Ticks);
+    }
+
+    /// <summary>
+    /// Returns a range of <see cref="DateTime"/> objects matching the criteria provided.
+    /// </summary>
+    /// <example>
+    /// IEnumerable<DateTime> dateRange = DateTime.Now.GetDateRangeTo(DateTime.Now.AddDays(80));
+    /// </example>
+    /// <param name="self"><see cref="DateTime"/></param>
+    /// <param name="toDate"><see cref="DateTime"/></param>
+    /// <returns><see cref="IEnumerable{DateTime}"/></returns>
+    public static IEnumerable<DateTime> GetDateRangeTo(this DateTime self, DateTime toDate)
+    {
+        var range = Enumerable.Range(0, new TimeSpan(toDate.Ticks - self.Ticks).Days);
+
+        return from p in range select self.Date.AddDays(p);
+    }
+
+    /// <summary>
+    /// Determine if the date is a working day.
+    /// </summary>
+    public static bool WorkingDay(this DateTime date)
+    {
+        return date.DayOfWeek != DayOfWeek.Saturday && date.DayOfWeek != DayOfWeek.Sunday;
+    }
+    /// <summary>
+    /// Determine if the date is a weekend.
+    /// </summary>
+    public static bool IsWeekend(this DateTime date)
+    {
+        return date.DayOfWeek == DayOfWeek.Saturday || date.DayOfWeek == DayOfWeek.Sunday;
+    }
+    /// <summary>
+    /// Determine the next workday coming up.
+    /// </summary>
+    public static DateTime NextWorkday(this DateTime date)
+    {
+        DateTime nextDay = date.AddDays(1);
+        while (!nextDay.WorkingDay())
+        {
+            nextDay = nextDay.AddDays(1);
+        }
+        return nextDay;
+    }
+
+    /// <summary>
+    /// Attempt to tryparse a date string.
+    /// If successful the new DateTime seconds will be added to the 1/1/1970 object.
+    /// </summary>
+    /// <param name="value"></param>
+    /// <returns><see cref="DateTime"/> object if successful, null otherwise</returns>
+    public static DateTime? ConvertNumberToDate(this string value)
+    {
+        DateTime _time = new DateTime(1970, 1, 1, 0, 0, 0, 0);
+
+        if (!string.IsNullOrEmpty(value))
+        {
+            double dateTime;
+            if (Double.TryParse(value, out dateTime))
+                return _time.AddSeconds(dateTime);
+            else
+                return null;
+        }
+        else
+            return null;
+    }
+
+    /// <summary>
+    /// Helper for walking up the folder tree.
+    /// </summary>
+    public static string NavigateUpFolders(string basePath, int step = 2)
+    {
+        if (string.IsNullOrEmpty(basePath))
+            basePath = Environment.CurrentDirectory;
+
+        if (step < 1)
+            return basePath;
+
+        for (int i = 0; i < step; i++)
+        {
+            var tmp = Directory.GetParent(basePath)?.FullName;
+            if (!string.IsNullOrEmpty(tmp))
+                basePath = tmp;
+        }
+
+        #region [Alternative]
+        //var stack = string.Empty;
+        //for (int i = 0; i < step; i++) { stack += @"..\"; }
+        //var newPath = Path.GetFullPath(Path.Combine(basePath, stack));
+        #endregion
+
+        return basePath;
+    }
+
+    /// <summary>
+    /// A random <see cref="Boolean"/> generator.
+    /// </summary>
+    public static bool CoinFlip() => (Rnd.Next(100) > 49) ? true : false;
+
+    /// <summary>
     /// An updated string truncation helper.
     /// </summary>
-    public static string Truncate(this string text, int maxLength, string mesial = "...")
+    public static string Truncate(this string text, int maxLength, string mesial = "…")
     {
         if (string.IsNullOrEmpty(text))
             return string.Empty;
@@ -404,24 +716,6 @@ public static class Utils
                 break;
             }
         }
-    }
-
-    /// <summary>
-    /// Checks if a date is between two dates.
-    /// </summary>
-    public static bool Between(this DateTime dt, DateTime rangeBeg, DateTime rangeEnd)
-    {
-        return dt.Ticks >= rangeBeg.Ticks && dt.Ticks <= rangeEnd.Ticks;
-    }
-
-    public static DateTime StartOfMonth(this DateTime dateTime)
-    {
-        return dateTime.Date.AddDays(-1 * (dateTime.Day - 1));
-    }
-
-    public static DateTime EndOfMonth(this DateTime dateTime)
-    {
-        return new DateTime(dateTime.Year, dateTime.Month, DateTime.DaysInMonth(dateTime.Year, dateTime.Month));
     }
 
     /// <summary>
@@ -1529,56 +1823,52 @@ public static class Utils
     /// Extracts the XML node name and removes all delimiters.
     /// </summary>
     public static string RemoveXmlTags(this string input)
-		{
-			// Closing tag.
-			System.Text.RegularExpressions.Match attempt1 = System.Text.RegularExpressions.Regex.Match(input, "<(.*?)/>");
-			if (attempt1.Success)
-				return attempt1.Groups[1].Value.Trim();
+	{
+		// Closing tag.
+		System.Text.RegularExpressions.Match attempt1 = System.Text.RegularExpressions.Regex.Match(input, "<(.*?)/>");
+		if (attempt1.Success)
+			return attempt1.Groups[1].Value.Trim();
 
-			// Opening tag.
-			System.Text.RegularExpressions.Match attempt2 = System.Text.RegularExpressions.Regex.Match(input, "<(.*?)>");
-			if (attempt2.Success)
-				return attempt2.Groups[1].Value.Trim();
+		// Opening tag.
+		System.Text.RegularExpressions.Match attempt2 = System.Text.RegularExpressions.Regex.Match(input, "<(.*?)>");
+		if (attempt2.Success)
+			return attempt2.Groups[1].Value.Trim();
 
-			return input;
-		}
+		return input;
+	}
 
-		/// <summary>
-		/// Can be helpful with XML payloads that contain too many namespaces.
-		/// </summary>
-		/// <param name="xmlDocument"></param>
-		/// <param name="disableFormatting"></param>
-		/// <returns>sanitized XML</returns>
-		public static string RemoveAllNamespaces(string xmlDocument, bool disableFormatting = true)
-		{
-			try
-			{
-				XElement xmlDocumentWithoutNs = RemoveAllNamespaces(XElement.Parse(xmlDocument));
-				if (disableFormatting)
-					return xmlDocumentWithoutNs.ToString(SaveOptions.DisableFormatting);
-				else
-					return xmlDocumentWithoutNs.ToString();
-			}
-			catch (Exception ex)
-			{
-				Debug.WriteLine($"RemoveAllNamespaces: {ex.Message}");
-				return xmlDocument;
-			}
-		}
-		static XElement RemoveAllNamespaces(XElement xmlDocument)
-		{
-			if (!xmlDocument.HasElements)
-			{
-				XElement xElement = new XElement(xmlDocument.Name.LocalName);
-				xElement.Value = xmlDocument.Value;
-
-				foreach (XAttribute attribute in xmlDocument.Attributes())
-					xElement.Add(attribute);
-
-				return xElement;
-			}
-			return new XElement(xmlDocument.Name.LocalName, xmlDocument.Elements().Select(el => RemoveAllNamespaces(el)));
-		}
+    /// <summary>
+    /// Can be helpful with XML payloads that contain too many namespaces.
+    /// </summary>
+    /// <param name="xmlDocument"></param>
+    /// <param name="disableFormatting"></param>
+    /// <returns>sanitized XML</returns>
+    public static string RemoveAllNamespaces(string xmlDocument, bool disableFormatting = true)
+    {
+        try
+        {
+            XElement xmlDocumentWithoutNs = RemoveAllNamespaces(XElement.Parse(xmlDocument));
+            if (disableFormatting)
+                return xmlDocumentWithoutNs.ToString(SaveOptions.DisableFormatting);
+            else
+                return xmlDocumentWithoutNs.ToString();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"RemoveAllNamespaces: {ex.Message}");
+            return xmlDocument;
+        }
+    }
+    static XElement RemoveAllNamespaces(XElement? e)
+    {
+        return new XElement(e?.Name.LocalName,
+                            (from n in e?.Nodes()
+                            select ((n is XElement) ? RemoveAllNamespaces(n as XElement) : n)),
+                            (e != null && e.HasAttributes) ?
+                            (from a in e?.Attributes()
+                            where (!a.IsNamespaceDeclaration)
+                            select new XAttribute(a.Name.LocalName, a.Value)) : null);
+    }
 
     /// <summary>
     /// Extracts a single <see cref="XmlNode"/> and returns the OuterXml.
@@ -1621,17 +1911,17 @@ public static class Utils
     /// <summary>
     /// A recursive node reader.
     /// </summary>
-		/// <example>
-		/// <code>
+	/// <example>
+	/// <code>
     /// while (xmlReader.Read())
-		/// {
+	/// {
     ///    if (xmlReader.NodeType == XmlNodeType.Element)
-		///    { 
-		///       xmlReader.TraverseNode(); 
-		///    }
-		/// }
-		/// </code>
-		/// </example>
+	///    { 
+	///       xmlReader.TraverseNode(); 
+	///    }
+	/// }
+	/// </code>
+	/// </example>
     /// <param name="reader"><see cref="XmlReader"/></param>
     /// <param name="name">current node name (optional)</param>
     public static void TraverseNode(this XmlReader reader, string name = "")
